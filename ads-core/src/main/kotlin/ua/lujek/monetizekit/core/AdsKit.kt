@@ -49,6 +49,8 @@ sealed interface MonetizeKitState {
 sealed interface AdsEvent {
     data class NetworkInitialized(val network: AdsNetwork) : AdsEvent
     data class NetworkInitializationFailed(val network: AdsNetwork, val error: AdsError) : AdsEvent
+    data class AdPreloaded(val placement: FullscreenPlacement, val network: AdsNetwork) : AdsEvent
+    data class AdPreloadFailed(val placement: FullscreenPlacement, val error: AdsError) : AdsEvent
     data class AdShown(val placement: AdPlacement, val network: AdsNetwork) : AdsEvent
     data class AdShowFailed(val placement: AdPlacement, val error: AdsError) : AdsEvent
 }
@@ -66,6 +68,7 @@ object MonetizeKit {
     private val mutableGdprConsent = MutableStateFlow<GdprConsentState>(GdprConsentState.NotRequested)
     private val consentMutex = Mutex()
     private val fullscreenShowMutex = Mutex()
+    private val fullscreenPlacementMutexes = ConcurrentHashMap<PlacementId, Mutex>()
 
     private var container: KoinApplication? = null
     private var initializationJob: Job? = null
@@ -183,7 +186,9 @@ object MonetizeKit {
         activity: Activity,
         placement: InterstitialPlacement,
     ): AdShowResult = fullscreenShowMutex.withLock {
-        showInternal(activity, placement) {}
+        withFullscreenPlacementLock(placement.id) {
+            showInternal(activity, placement) {}
+        }
     }
 
     suspend fun show(
@@ -191,8 +196,24 @@ object MonetizeKit {
         placement: RewardedPlacement,
         onReward: (AdReward) -> Unit,
     ): AdShowResult = fullscreenShowMutex.withLock {
-        showInternal(activity, placement, onReward)
+        withFullscreenPlacementLock(placement.id) {
+            showInternal(activity, placement, onReward)
+        }
     }
+
+    /**
+     * Prepares an interstitial without showing it. Calls for the same placement are serialized,
+     * and direct-mode candidates are tried in their configured priority order.
+     */
+    suspend fun preload(placement: InterstitialPlacement): AdLoadResult =
+        withFullscreenPlacementLock(placement.id) { preloadInternal(placement) }
+
+    /**
+     * Prepares a rewarded ad without showing it. Calls for the same placement are serialized,
+     * and direct-mode candidates are tried in their configured priority order.
+     */
+    suspend fun preload(placement: RewardedPlacement): AdLoadResult =
+        withFullscreenPlacementLock(placement.id) { preloadInternal(placement) }
 
     /**
      * Creates a traditional Android View container for use by Views or the ads-compose module.
@@ -388,6 +409,11 @@ object MonetizeKit {
                 ) {
                     AdShowResult.Shown -> {
                         mutableEvents.emit(AdsEvent.AdShown(placement, candidate.network))
+                        scope.launch {
+                            withFullscreenPlacementLock(placement.id) {
+                                preloadInternal(placement)
+                            }
+                        }
                         return@withContext AdShowResult.Shown
                     }
 
@@ -398,6 +424,52 @@ object MonetizeKit {
             }
         }
         failShow(placement, lastError)
+    }
+
+    private suspend fun preloadInternal(placement: FullscreenPlacement): AdLoadResult =
+        withContext(Dispatchers.Main.immediate) {
+            val runtime = currentRuntime()
+                ?: return@withContext failPreload(
+                    placement,
+                    AdsError(message = "MonetizeKit is not initialized."),
+                )
+            val definition = runtime.configuration.placements[placement.id]
+                ?: return@withContext failPreload(
+                    placement,
+                    AdsError(message = "Fullscreen placement '${placement.id}' is not configured."),
+                )
+            if (definition.placement.format != placement.format) {
+                return@withContext failPreload(
+                    placement,
+                    AdsError(message = "Placement '${placement.id}' has a different ad format."),
+                )
+            }
+
+            when (
+                val result = preloadFirstFullscreenCandidate(
+                    placement = placement,
+                    candidates = definition.candidates,
+                    adapters = runtime.adapters,
+                    readyNetworks = runtime.readyNetworks,
+                )
+            ) {
+                is FullscreenPreloadResult.Loaded -> {
+                    mutableEvents.emit(AdsEvent.AdPreloaded(placement, result.network))
+                    AdLoadResult.Loaded
+                }
+
+                is FullscreenPreloadResult.Failed -> failPreload(placement, result.error)
+            }
+        }
+
+    private suspend fun <T> withFullscreenPlacementLock(
+        placementId: PlacementId,
+        block: suspend () -> T,
+    ): T = fullscreenPlacementMutexes.getOrPut(placementId) { Mutex() }.withLock { block() }
+
+    private fun failPreload(placement: FullscreenPlacement, error: AdsError): AdLoadResult.Failed {
+        mutableEvents.tryEmit(AdsEvent.AdPreloadFailed(placement, error))
+        return AdLoadResult.Failed(error)
     }
 
     private fun failShow(placement: AdPlacement, error: AdsError): AdShowResult.Failed {

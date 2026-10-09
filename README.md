@@ -260,8 +260,22 @@ bannerSlot.release()
 
 ## Show fullscreen ads
 
-The API is suspending. It performs direct fallback (or asks the mediation ad unit) and returns a
-result instead of automatically presenting an ad.
+The API is suspending. Preload a fullscreen placement when the SDK becomes `Ready`; this loads only
+the first eligible candidate in the configured priority order and does not show anything. Calls for
+the same placement are serialized. A successful `show()` consumes that creative and automatically
+starts preparing its replacement after dismissal.
+
+```kotlin
+lifecycleScope.launch {
+    when (val result = MonetizeKit.preload(AppAds.levelComplete)) {
+        AdLoadResult.Loaded -> enableLevelCompleteTransition()
+        is AdLoadResult.Failed -> continueWithoutInterstitial(result.error)
+    }
+}
+```
+
+`show()` is always explicit. It uses the cached creative when available, otherwise performs the
+same ordered direct fallback (or asks the mediation ad unit) and returns a result:
 
 ```kotlin
 lifecycleScope.launch {
@@ -302,10 +316,24 @@ lifecycleScope.launch {
 
 lifecycleScope.launch {
     MonetizeKit.events.collect { event ->
-        // NetworkInitialized, AdShown, or AdShowFailed.
+        // NetworkInitialized, AdPreloaded, AdShown, AdPreloadFailed, or AdShowFailed.
     }
 }
 ```
+
+## Debug sample
+
+The `:app` module is a runnable debug playground. It uses Google's official demo App ID and ad
+unit IDs for banner, native, interstitial, and rewarded ads; the values live only in the `debug`
+source set. The release variant neither initializes MonetizeKit nor contains the AdMob App ID.
+
+```shell
+./gradlew :app:installDebug
+./gradlew :app:connectedDebugAndroidTest
+```
+
+The sample exposes SDK/UMP state, preload, explicit fullscreen show controls, privacy options, and
+the height-reserved Compose banner/native slots. It is a verification tool, not production app code.
 
 ## Verification checklist
 
@@ -313,5 +341,6 @@ lifecycleScope.launch {
 - Use either `direct { ... }` or `admobMediation { ... }`, never both.
 - Add only the Gradle adapters that belong to the selected mode.
 - Test every configured placement and direct fallback order on real devices.
+- Check that preloading produces one `AdPreloaded` event and that `show()` never presents more than one fullscreen ad.
 - Confirm no debug test IDs or Unity test mode are included in the release variant.
 - Provide an in-app privacy-options entry point when UMP requires it.

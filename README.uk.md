@@ -260,8 +260,22 @@ bannerSlot.release()
 
 ## Показуйте fullscreen-рекламу
 
-API є suspending: воно виконує direct fallback або звертається до mediation ad unit і повертає
-результат, але не показує рекламу автоматично після `onLoaded`.
+API є suspending. Коли SDK перейшов у `Ready`, завчасно викличте preload fullscreen-placement:
+буде завантажено лише першого доступного кандидата у заданому порядку, без показу реклами. Виклики
+для одного placement виконуються послідовно. Після успішного `show()` creative витрачається, а бібліотека
+автоматично починає готувати наступний після закриття реклами.
+
+```kotlin
+lifecycleScope.launch {
+    when (val result = MonetizeKit.preload(AppAds.levelComplete)) {
+        AdLoadResult.Loaded -> enableLevelCompleteTransition()
+        is AdLoadResult.Failed -> continueWithoutInterstitial(result.error)
+    }
+}
+```
+
+`show()` завжди викликається явно. Він використає підготовлений creative, якщо він є; інакше
+виконає той самий ordered direct fallback або звернеться до mediation ad unit:
 
 ```kotlin
 lifecycleScope.launch {
@@ -303,10 +317,24 @@ lifecycleScope.launch {
 
 lifecycleScope.launch {
     MonetizeKit.events.collect { event ->
-        // NetworkInitialized, AdShown або AdShowFailed.
+        // NetworkInitialized, AdPreloaded, AdShown, AdPreloadFailed або AdShowFailed.
     }
 }
 ```
+
+## Debug sample
+
+Модуль `:app` — це runnable playground для debug. Він використовує офіційні Google demo App ID та
+ad unit ID для banner, native, interstitial і rewarded; ці значення існують лише у source set
+`debug`. Release-variant не ініціалізує MonetizeKit і не містить AdMob App ID.
+
+```shell
+./gradlew :app:installDebug
+./gradlew :app:connectedDebugAndroidTest
+```
+
+Sample показує SDK/UMP state, preload, явний показ fullscreen-реклами, privacy options та Compose
+banner/native slots із зарезервованою висотою. Це інструмент перевірки, а не production app code.
 
 ## Перевірка перед релізом
 
@@ -314,5 +342,6 @@ lifecycleScope.launch {
 - Використовуйте або `direct { ... }`, або `admobMediation { ... }`, але не обидва режими.
 - Додавайте лише Gradle adapters обраного режиму.
 - Перевірте кожен placement і порядок direct fallback на реальних пристроях.
+- Переконайтеся, що preload генерує одну подію `AdPreloaded`, а `show()` не показує дві fullscreen-реклами підряд.
 - Переконайтеся, що у release немає test ID та Unity test mode.
 - Додайте in-app точку входу для privacy options, якщо цього вимагає UMP.
