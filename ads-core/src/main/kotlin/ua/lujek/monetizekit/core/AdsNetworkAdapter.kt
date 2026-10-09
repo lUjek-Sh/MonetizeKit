@@ -38,6 +38,9 @@ interface AdsNetworkAdapter {
         placement: NativePlacement,
         adUnitId: String,
     ): NativeAdController?
+
+    /** Removes a not-yet-shown fullscreen creative after ad access has been revoked. */
+    fun clearFullscreenCache()
 }
 
 fun interface AdsNetworkAdapterFactory {
@@ -61,6 +64,7 @@ sealed interface AdViewState {
     data object Idle : AdViewState
     data object Loading : AdViewState
     data object Loaded : AdViewState
+    data object Suppressed : AdViewState
     data class Failed(val error: AdsError) : AdViewState
 }
 
@@ -72,11 +76,13 @@ sealed interface NetworkInitializationResult {
 
 sealed interface AdLoadResult {
     data object Loaded : AdLoadResult
+    data object Suppressed : AdLoadResult
     data class Failed(val error: AdsError) : AdLoadResult
 }
 
 sealed interface AdShowResult {
     data object Shown : AdShowResult
+    data object Suppressed : AdShowResult
     data class Failed(val error: AdsError) : AdShowResult
 }
 

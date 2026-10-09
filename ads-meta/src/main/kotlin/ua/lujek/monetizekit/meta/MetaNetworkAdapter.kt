@@ -109,7 +109,15 @@ internal class MetaNetworkAdapter : AdsNetworkAdapter {
         adUnitId: String,
     ): NativeAdController = MetaNativeController(context, adUnitId)
 
+    override fun clearFullscreenCache() {
+        interstitials.values.forEach(MetaInterstitialEntry::destroy)
+        rewardedVideos.values.forEach(MetaRewardedEntry::destroy)
+        interstitials.clear()
+        rewardedVideos.clear()
+    }
+
     private fun error(message: String): AdsError = AdsError(network = network, message = message)
+
 }
 
 private class MetaNativeController(
@@ -222,6 +230,12 @@ private class MetaInterstitialEntry(
     }
 
     private fun error(message: String): AdsError = AdsError(network = AdsNetwork.META, message = message)
+
+    fun destroy() {
+        loadContinuation?.cancel()
+        showContinuation?.cancel()
+        ad.destroy()
+    }
 }
 
 private class MetaRewardedEntry(
@@ -283,6 +297,13 @@ private class MetaRewardedEntry(
     }
 
     private fun error(message: String): AdsError = AdsError(network = AdsNetwork.META, message = message)
+
+    fun destroy() {
+        loadContinuation?.cancel()
+        showContinuation?.cancel()
+        rewardHandler = null
+        ad.destroy()
+    }
 }
 
 private class MetaBannerController(

@@ -115,6 +115,11 @@ internal class AdMobNetworkAdapter : AdsNetworkAdapter {
         adUnitId: String,
     ): NativeAdController = AdMobNativeController(context, adUnitId)
 
+    override fun clearFullscreenCache() {
+        interstitials.clear()
+        rewardedAds.clear()
+    }
+
     private suspend fun loadInterstitial(adUnitId: String): AdLoadResult {
         if (interstitials.containsKey(adUnitId)) return AdLoadResult.Loaded
         val context = application ?: return AdLoadResult.Failed(error("AdMob is not initialized."))

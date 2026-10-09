@@ -75,6 +75,7 @@ class AdsConfiguration internal constructor(
     val meta: MetaConfiguration?,
     val unity: UnityConfiguration?,
     val gdpr: GdprConfiguration,
+    val adsAccessProvider: AdsAccessProvider,
     internal val placements: Map<PlacementId, PlacementDefinition>,
 ) {
     internal fun networkConfiguration(network: AdsNetwork): Any? = when (network) {
@@ -94,7 +95,9 @@ class AdsConfigurationBuilder {
     private var metaConfiguration: MetaConfiguration? = null
     private var unityConfiguration: UnityConfiguration? = null
     private var gdprConfiguration: GdprConfiguration = GdprConfiguration(debug = null)
+    private var adsAccessProvider: AdsAccessProvider = AdsAccessProviders.alwaysAllowed
     private var isGdprConfigured = false
+    private var isAdsAccessConfigured = false
     private val placementDefinitions = linkedMapOf<PlacementId, PlacementDefinition>()
 
     /**
@@ -126,6 +129,16 @@ class AdsConfigurationBuilder {
         check(!isGdprConfigured) { "GDPR is configured more than once." }
         isGdprConfigured = true
         gdprConfiguration = GdprConfigurationBuilder().apply(block).build()
+    }
+
+    /**
+     * Observes whether ads may be requested. Use this only when an application has an ad-removal
+     * entitlement; omit it when billing sells unrelated products or when billing is absent.
+     */
+    fun adsAccess(provider: AdsAccessProvider) {
+        check(!isAdsAccessConfigured) { "Ads access is configured more than once." }
+        isAdsAccessConfigured = true
+        adsAccessProvider = provider
     }
 
     fun banner(
@@ -171,6 +184,7 @@ class AdsConfigurationBuilder {
             meta = metaConfiguration,
             unity = unityConfiguration,
             gdpr = gdprConfiguration,
+            adsAccessProvider = adsAccessProvider,
             placements = placementDefinitions.toMap(),
         )
         require(configuration.placements.isNotEmpty()) { "Configure at least one ad placement." }

@@ -1,8 +1,10 @@
 package ua.lujek.monetizekit.core
 
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -95,5 +97,26 @@ class AdsConfigurationTest {
 
         assertTrue(configuration.adMob?.testDeviceIds.orEmpty().isEmpty())
         assertFalse(configuration.gdpr.debug != null)
+    }
+
+    @Test
+    fun `ads access is application owned and optional`() {
+        val accessProvider = object : AdsAccessProvider {
+            override val access = MutableStateFlow<AdsAccess>(AdsAccess.Suppressed)
+        }
+
+        val configuration = monetizeConfiguration {
+            adsAccess(accessProvider)
+            direct {
+                meta()
+            }
+            interstitial(levelComplete) {
+                meta("META_INTERSTITIAL")
+            }
+        }
+
+        assertSame(accessProvider, configuration.adsAccessProvider)
+        assertEquals(AdsAccess.Suppressed, configuration.adsAccessProvider.access.value)
+        assertEquals(AdsAccess.Allowed, AdsAccessProviders.alwaysAllowed.access.value)
     }
 }

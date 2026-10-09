@@ -16,3 +16,6 @@ local.properties
 /ads-unity/build
 /ads-admob-meta-mediation/build
 /ads-admob-unity-mediation/build
+/billing-ads/build
+/billing-core/build
+/billing-google-play/build

@@ -27,6 +27,9 @@ mediation-версію одночасно.
 | `:ads-admob-meta-mediation` | Необов'язковий офіційний Meta adapter тільки для AdMob Mediation. |
 | `:ads-admob-unity-mediation` | Необов'язковий офіційний Unity adapter тільки для AdMob Mediation. |
 | `:ads-compose` | Compose-обгортки `AdsBanner` і `AdsNative`. |
+| `:billing-core` | Каталог продуктів, довільні application entitlement-и, нормалізовані purchase-події та контракт верифікації. |
+| `:billing-google-play` | Необов'язкова реалізація Google Play Billing 9. |
+| `:billing-ads` | Необов'язковий міст, який вимикає рекламу за вибраними billing entitlement-ами. |
 
 Підключайте лише адаптери обраного режиму та лише ті формати, які справді потрібні застосунку.
 
@@ -62,6 +65,20 @@ dependencies {
 Для mediated мережі не додавайте `:ads-meta` або `:ads-unity`: mediation adapter не є direct
 adapter-ом і його ініціалізує Google Mobile Ads SDK.
 
+### Необов'язковий billing
+
+```kotlin
+dependencies {
+    implementation(project(":billing-core"))
+    implementation(project(":billing-google-play")) // лише для Google Play storefront
+    implementation(project(":billing-ads"))         // лише коли entitlement може вимкнути рекламу
+}
+```
+
+Billing повністю необов'язковий. Застосунок без покупок не додає ці модулі. Якщо застосунок продає
+лише покупки, не пов'язані з рекламою, додайте `:billing-core` і `:billing-google-play`, але не
+додавайте `:billing-ads` та не викликайте `adsAccess(...)`.
+
 ## AndroidManifest
 
 Google Mobile Ads та UMP потребують AdMob Application ID, навіть якщо AdMob використовується
@@ -92,7 +109,9 @@ object AppAds {
 ```
 
 `reservedHeightDp` є обов'язковим для banner і native. Контейнер зберігає висоту, поки реклама
-завантажується, не заповнюється або недоступна, тому контент екрана не стрибає.
+завантажується, не заповнюється або недоступна, тому контент екрана не стрибає. Висота стає нульовою
+лише тоді, коли налаштована access policy явно вимикає рекламу, наприклад після активного paid
+entitlement-а.
 
 ## Ініціалізація: direct
 
@@ -235,6 +254,87 @@ lifecycleScope.launch {
 }
 ```
 
+## Необов'язковий billing та entitlement-и
+
+MonetizeKit не прирівнює product ID до функції. Застосунок сам зіставляє довільний Play Console
+product ID з одним або кількома довільними application entitlement ID. Тому одна покупка `pro_app`
+може одразу надати `ads_free`, `pro_sections` і будь-які наступні права без зміни product ID.
+
+У прикладі нижче `ads_free` керує лише рекламою. `pro_sections` доступний решті застосунку через
+`billing.entitlements`; для реклами це право не має значення.
+
+```kotlin
+class App : Application() {
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    override fun onCreate() {
+        super.onCreate()
+
+        val adsFree = BillingEntitlementId.of("ads_free")
+        val proSections = BillingEntitlementId.of("pro_sections")
+        val billing = GooglePlayBilling(
+            context = this,
+            catalog = BillingCatalog(
+                listOf(
+                    BillingProduct(
+                        id = BillingProductId.of("pro_app"),
+                        type = BillingProductType.ONE_TIME_NON_CONSUMABLE,
+                        grants = setOf(adsFree, proSections),
+                    ),
+                    BillingProduct(
+                        id = BillingProductId.of("coins_500"),
+                        type = BillingProductType.ONE_TIME_CONSUMABLE,
+                    ),
+                ),
+            ),
+            purchaseVerifier = appPurchaseVerifier,
+        )
+
+        MonetizeKit.initialize(this) {
+            adsAccess(
+                billing.adsAccessProvider(
+                    scope = applicationScope,
+                    suppressAdsWhenAnyOf = setOf(adsFree),
+                ),
+            )
+            // direct { ... } або admobMediation { ... }, GDPR та placement-и
+        }
+
+        applicationScope.launch { billing.start() }
+    }
+}
+```
+
+`appPurchaseVerifier` — реалізація `PurchaseVerifier` на боці застосунку: вона надсилає purchase
+token, підписаний purchase JSON і signature на захищений backend застосунку. Вона має повернути
+`PurchaseVerification.Verified` тільки після того, як backend **перевірив і надав** покупку.
+Після цього SDK acknowledge-ить non-consumable/subscription або consume-ить consumable. Якщо
+verifier повертає `RetryLater`, покупка лишається необробленою, тому Google Play доставить її знову.
+
+Ця послідовність відповідає вимозі Google: verify, grant, потім acknowledge (або consume для
+consumable). Не використовуйте client-only verifier для платних production-прав. [Посібник з
+інтеграції Google Play Billing](https://developer.android.com/google/play/billing/integrate)
+
+Коли entitlement-и мають стан `Loading` або `Unavailable`, ads bridge fail-closed: не резервує
+місце під banner/native і не робить ad request. Після `Available(emptySet())` MonetizeKit запускає
+звичайний GDPR flow. Якщо `ads_free` стане активним пізніше, завантажені fullscreen-оголошення
+видаляються, `show()`/`preload()` повертають `Suppressed`, а inline slot-и зникають одразу.
+
+Той самий entitlement stream керує функціями, не пов'язаними з рекламою:
+
+```kotlin
+val canOpenProSections = (billing.entitlements.value as? EntitlementState.Available)
+    ?.active
+    ?.contains(proSections)
+    ?: false
+```
+
+`BillingPurchaseEvent.Processed` надходить лише після верифікації та Google Play finalization;
+спостерігайте за ним для UI чи analytics. Саме сервер, а не event collector, має idempotent-но
+надавати consumable та інший paid content за purchase token. Викликайте `billing.refresh()`, коли
+застосунок повертається на foreground після тривалої роботи, а `billing.close()` — лише під час
+завершення процесу застосунку.
+
 ## Відмальовуйте inline-рекламу
 
 ### Jetpack Compose
@@ -269,6 +369,7 @@ API є suspending. Коли SDK перейшов у `Ready`, завчасно в
 lifecycleScope.launch {
     when (val result = MonetizeKit.preload(AppAds.levelComplete)) {
         AdLoadResult.Loaded -> enableLevelCompleteTransition()
+        AdLoadResult.Suppressed -> continueWithoutInterstitial()
         is AdLoadResult.Failed -> continueWithoutInterstitial(result.error)
     }
 }
@@ -281,6 +382,7 @@ lifecycleScope.launch {
 lifecycleScope.launch {
     when (val result = MonetizeKit.show(this@GameActivity, AppAds.levelComplete)) {
         AdShowResult.Shown -> continueGame()
+        AdShowResult.Suppressed -> continueGameWithoutAd()
         is AdShowResult.Failed -> continueGameWithoutAd(result.error)
     }
 }
@@ -311,13 +413,13 @@ consent-info request. Перед публікацією переконайтес
 ```kotlin
 lifecycleScope.launch {
     MonetizeKit.state.collect { state ->
-        // AwaitingGdprConsent, Ready або Failed.
+        // AwaitingGdprConsent, Ready, AdsSuppressed або Failed.
     }
 }
 
 lifecycleScope.launch {
     MonetizeKit.events.collect { event ->
-        // NetworkInitialized, AdPreloaded, AdShown, AdPreloadFailed або AdShowFailed.
+        // NetworkInitialized, AdsAccessChanged, AdPreloaded, AdShown або failure-події.
     }
 }
 ```
@@ -345,3 +447,7 @@ banner/native slots із зарезервованою висотою. Це ін�
 - Переконайтеся, що preload генерує одну подію `AdPreloaded`, а `show()` не показує дві fullscreen-реклами підряд.
 - Переконайтеся, що у release немає test ID та Unity test mode.
 - Додайте in-app точку входу для privacy options, якщо цього вимагає UMP.
+- Якщо billing керує доступом до реклами, перевіряйте та надавайте покупки на захищеному backend
+  перед поверненням `Verified`.
+- Переконайтеся, що покупка `pro_app` надає всі потрібні entitlement-и, а рекламу вимикає лише
+  явно налаштований ad-free entitlement.

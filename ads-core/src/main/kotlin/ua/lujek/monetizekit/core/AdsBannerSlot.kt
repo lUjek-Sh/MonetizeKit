@@ -10,6 +10,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -37,8 +38,26 @@ class AdsBannerSlot(
     private var activeController: BannerAdController? = null
     private var observationJob: Job? = null
     private var released = false
+    private var adsAllowed = MonetizeKit.adsAccess.value == AdsAccess.Allowed
 
     val state: StateFlow<AdViewState> = mutableState
+
+    init {
+        scope.launch {
+            MonetizeKit.adsAccess.collect { access ->
+                val nowAllowed = access == AdsAccess.Allowed
+                if (adsAllowed == nowAllowed) return@collect
+                adsAllowed = nowAllowed
+                if (nowAllowed) {
+                    mutableState.value = AdViewState.Idle
+                    requestLayout()
+                    load()
+                } else {
+                    suppress()
+                }
+            }
+        }
+    }
 
     internal fun setCandidates(candidates: List<BannerAttempt>) {
         check(!released) { "This AdsBannerSlot has already been released." }
@@ -50,7 +69,7 @@ class AdsBannerSlot(
     }
 
     fun load() {
-        if (released || mutableState.value is AdViewState.Loading || mutableState.value is AdViewState.Loaded) return
+        if (!adsAllowed || released || mutableState.value is AdViewState.Loading || mutableState.value is AdViewState.Loaded) return
         if (candidates.isEmpty()) {
             if (mutableState.value !is AdViewState.Failed) {
                 setError(AdsError(message = "No banner network is available."))
@@ -76,7 +95,7 @@ class AdsBannerSlot(
     }
 
     private fun loadCandidate(index: Int) {
-        if (released) return
+        if (released || !adsAllowed) return
         if (index >= candidates.size) {
             setError(AdsError(message = "All configured banner networks failed to load."))
             return
@@ -113,11 +132,21 @@ class AdsBannerSlot(
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
-        setMeasuredDimension(measuredWidth, View.resolveSize(reservedHeightPx, heightMeasureSpec))
+        val height = if (adsAllowed) View.resolveSize(reservedHeightPx, heightMeasureSpec) else 0
+        setMeasuredDimension(measuredWidth, height)
     }
 
     private val reservedHeightPx: Int
         get() = (reservedHeightDp * resources.displayMetrics.density).toInt()
+
+    private fun suppress() {
+        observationJob?.cancel()
+        activeController?.destroy()
+        activeController = null
+        removeAllViews()
+        mutableState.value = AdViewState.Suppressed
+        requestLayout()
+    }
 }
 
 /** An Android View host with ordered fallback for native placements. */
@@ -131,8 +160,26 @@ class AdsNativeSlot(
     private var activeController: NativeAdController? = null
     private var observationJob: Job? = null
     private var released = false
+    private var adsAllowed = MonetizeKit.adsAccess.value == AdsAccess.Allowed
 
     val state: StateFlow<AdViewState> = mutableState
+
+    init {
+        scope.launch {
+            MonetizeKit.adsAccess.collect { access ->
+                val nowAllowed = access == AdsAccess.Allowed
+                if (adsAllowed == nowAllowed) return@collect
+                adsAllowed = nowAllowed
+                if (nowAllowed) {
+                    mutableState.value = AdViewState.Idle
+                    requestLayout()
+                    load()
+                } else {
+                    suppress()
+                }
+            }
+        }
+    }
 
     internal fun setCandidates(candidates: List<NativeAttempt>) {
         check(!released) { "This AdsNativeSlot has already been released." }
@@ -144,7 +191,7 @@ class AdsNativeSlot(
     }
 
     fun load() {
-        if (released || mutableState.value is AdViewState.Loading || mutableState.value is AdViewState.Loaded) return
+        if (!adsAllowed || released || mutableState.value is AdViewState.Loading || mutableState.value is AdViewState.Loaded) return
         if (candidates.isEmpty()) {
             if (mutableState.value !is AdViewState.Failed) setError(AdsError(message = "No native network is available."))
             return
@@ -168,7 +215,7 @@ class AdsNativeSlot(
     }
 
     private fun loadCandidate(index: Int) {
-        if (released) return
+        if (released || !adsAllowed) return
         if (index >= candidates.size) {
             setError(AdsError(message = "All configured native networks failed to load."))
             return
@@ -204,9 +251,19 @@ class AdsNativeSlot(
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
-        setMeasuredDimension(measuredWidth, View.resolveSize(reservedHeightPx, heightMeasureSpec))
+        val height = if (adsAllowed) View.resolveSize(reservedHeightPx, heightMeasureSpec) else 0
+        setMeasuredDimension(measuredWidth, height)
     }
 
     private val reservedHeightPx: Int
         get() = (reservedHeightDp * resources.displayMetrics.density).toInt()
+
+    private fun suppress() {
+        observationJob?.cancel()
+        activeController?.destroy()
+        activeController = null
+        removeAllViews()
+        mutableState.value = AdViewState.Suppressed
+        requestLayout()
+    }
 }

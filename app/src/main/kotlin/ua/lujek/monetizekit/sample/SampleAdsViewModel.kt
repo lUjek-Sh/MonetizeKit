@@ -131,6 +131,7 @@ private fun MonetizeKitState.label(): String = when (this) {
     is MonetizeKitState.AwaitingGdprConsent -> "Waiting for UMP consent"
     is MonetizeKitState.Initializing -> "Initializing ${networks.joinToString()}"
     MonetizeKitState.GdprConsentRequired -> "Consent is required before ads can load"
+    MonetizeKitState.AdsSuppressed -> "Ads are disabled by the access policy"
     is MonetizeKitState.Ready -> "Ready: ${availableNetworks.joinToString()}"
     is MonetizeKitState.Failed -> "Initialization failed"
 }
@@ -142,14 +143,17 @@ private fun AdsEvent.label(): String = when (this) {
     is AdsEvent.AdPreloadFailed -> "${placement.id} preload failed: ${error.message}"
     is AdsEvent.AdShown -> "${placement.id} shown by $network"
     is AdsEvent.AdShowFailed -> "${placement.id} show failed: ${error.message}"
+    is AdsEvent.AdsAccessChanged -> "Ads access changed to $access"
 }
 
 private fun AdLoadResult.label(): String = when (this) {
     AdLoadResult.Loaded -> "ready"
+    AdLoadResult.Suppressed -> "suppressed"
     is AdLoadResult.Failed -> "failed (${error.message})"
 }
 
 private fun AdShowResult.label(): String = when (this) {
     AdShowResult.Shown -> "shown"
+    AdShowResult.Suppressed -> "suppressed"
     is AdShowResult.Failed -> "failed (${error.message})"
 }

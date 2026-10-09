@@ -113,6 +113,11 @@ internal class UnityNetworkAdapter : AdsNetworkAdapter {
         adUnitId: String,
     ): NativeAdController? = null
 
+    override fun clearFullscreenCache() {
+        interstitials.clear()
+        rewardedAds.clear()
+    }
+
     private suspend fun loadInterstitial(adUnitId: String): AdLoadResult {
         if (interstitials.containsKey(adUnitId)) return AdLoadResult.Loaded
         return suspendCancellableCoroutine { continuation ->

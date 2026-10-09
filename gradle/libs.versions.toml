@@ -1,21 +1,22 @@
 [versions]
 agp = "9.4.1"
 composeBom = "2026.09.00"
-coroutines = "1.10.2"
-koin = "4.1.1"
+coroutines = "1.11.0"
+koin = "4.2.2"
 kotlin = "2.4.21"
-googleMobileAds = "25.4.0"
+googleMobileAds = "25.5.0"
 metaAudienceNetwork = "6.22.0"
-unityAds = "4.20.0"
+unityAds = "4.21.0"
 metaMediationAdapter = "6.22.0.1"
-unityMediationAdapter = "4.20.0.1"
+unityMediationAdapter = "4.21.0.0"
 ump = "4.0.0"
+billing = "9.1.0"
 coreKtx = "1.19.1"
 junit = "4.13.2"
 junitVersion = "1.3.0"
 espressoCore = "3.7.0"
 appcompat = "1.8.0"
-material = "1.10.0"
+material = "1.14.0"
 activity = "1.13.0"
 lifecycle = "2.11.0"
 
@@ -43,6 +44,7 @@ unity-ads = { group = "com.unity3d.ads", name = "unity-ads", version.ref = "unit
 google-ads-mediation-meta = { group = "com.google.ads.mediation", name = "facebook", version.ref = "metaMediationAdapter" }
 google-ads-mediation-unity = { group = "com.google.ads.mediation", name = "unity", version.ref = "unityMediationAdapter" }
 google-ump = { group = "com.google.android.ump", name = "user-messaging-platform", version.ref = "ump" }
+google-play-billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "billing" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

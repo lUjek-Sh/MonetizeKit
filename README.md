@@ -26,6 +26,9 @@ the same placement from requesting both a direct network and its mediated copy.
 | `:ads-admob-meta-mediation` | Optional official Meta adapter for AdMob Mediation only. |
 | `:ads-admob-unity-mediation` | Optional official Unity adapter for AdMob Mediation only. |
 | `:ads-compose` | Compose `AdsBanner` and `AdsNative` wrappers. |
+| `:billing-core` | Product catalogue, arbitrary application entitlements, normalized purchase events, and verification contract. |
+| `:billing-google-play` | Optional Google Play Billing 9 implementation. |
+| `:billing-ads` | Optional bridge that uses selected billing entitlements to suppress ads. |
 
 Include only the adapters required by the selected mode and the formats used by the application.
 
@@ -61,6 +64,20 @@ dependencies {
 Do **not** include `:ads-meta` or `:ads-unity` for a mediated network. The mediation adapter is
 not a direct adapter and is initialized by Google Mobile Ads.
 
+### Optional billing
+
+```kotlin
+dependencies {
+    implementation(project(":billing-core"))
+    implementation(project(":billing-google-play")) // Google Play storefront only
+    implementation(project(":billing-ads"))         // only when a right can disable ads
+}
+```
+
+Billing is entirely optional. An app without purchases includes none of these modules. An app that
+sells purchases unrelated to advertising can include `:billing-core` and
+`:billing-google-play`, but omit `:billing-ads` and `adsAccess(...)`.
+
 ## Manifest
 
 Google Mobile Ads and UMP require an AdMob application ID, including projects that use UMP only
@@ -91,7 +108,8 @@ object AppAds {
 ```
 
 `reservedHeightDp` is mandatory for banner and native placements. The container retains this height
-while an ad loads, fails, or is unavailable, so content does not jump.
+while an ad loads, fails, or is unavailable, so content does not jump. It becomes zero only when
+the configured access policy explicitly suppresses ads, such as after an active paid entitlement.
 
 ## Initialize: direct mode
 
@@ -235,6 +253,88 @@ lifecycleScope.launch {
 }
 ```
 
+## Optional billing and entitlements
+
+MonetizeKit does not equate a product ID with a feature. The app maps each arbitrary Play Console
+product ID to one or more arbitrary application entitlement IDs. This means a single `pro_app`
+purchase can simultaneously grant `ads_free`, `pro_sections`, and any later entitlement without
+changing the product's ID.
+
+The example below uses `ads_free` only to control advertising. `pro_sections` remains visible to
+the rest of the app through `billing.entitlements`; it is not an advertising concern.
+
+```kotlin
+class App : Application() {
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    override fun onCreate() {
+        super.onCreate()
+
+        val adsFree = BillingEntitlementId.of("ads_free")
+        val proSections = BillingEntitlementId.of("pro_sections")
+        val billing = GooglePlayBilling(
+            context = this,
+            catalog = BillingCatalog(
+                listOf(
+                    BillingProduct(
+                        id = BillingProductId.of("pro_app"),
+                        type = BillingProductType.ONE_TIME_NON_CONSUMABLE,
+                        grants = setOf(adsFree, proSections),
+                    ),
+                    BillingProduct(
+                        id = BillingProductId.of("coins_500"),
+                        type = BillingProductType.ONE_TIME_CONSUMABLE,
+                    ),
+                ),
+            ),
+            purchaseVerifier = appPurchaseVerifier,
+        )
+
+        MonetizeKit.initialize(this) {
+            adsAccess(
+                billing.adsAccessProvider(
+                    scope = applicationScope,
+                    suppressAdsWhenAnyOf = setOf(adsFree),
+                ),
+            )
+            // direct { ... } or admobMediation { ... }, GDPR, and placements
+        }
+
+        applicationScope.launch { billing.start() }
+    }
+}
+```
+
+`appPurchaseVerifier` is an application-owned `PurchaseVerifier` that sends the purchase token,
+signed purchase JSON, and signature to the app's secure backend. It must return
+`PurchaseVerification.Verified` only after the backend has verified **and granted** the purchase.
+The SDK then acknowledges a non-consumable/subscription or consumes a consumable. It leaves a
+purchase pending when the verifier returns `RetryLater`, so Google Play can deliver it again.
+
+This sequence follows Google's required lifecycle: verify, grant, then acknowledge (or consume
+consumables). Do not use a client-only verifier for paid production benefits. [Google Play Billing
+integration guide](https://developer.android.com/google/play/billing/integrate)
+
+While entitlements are `Loading` or `Unavailable`, the ads bridge fails closed: it reserves no
+banner/native space and makes no ad request. Once the provider reports `Available(emptySet())`,
+MonetizeKit starts its normal GDPR flow. If `ads_free` later becomes active, loaded fullscreen ads
+are discarded, `show()`/`preload()` return `Suppressed`, and inline slots disappear immediately.
+
+Use the same entitlement stream for non-ad features:
+
+```kotlin
+val canOpenProSections = (billing.entitlements.value as? EntitlementState.Available)
+    ?.active
+    ?.contains(proSections)
+    ?: false
+```
+
+`BillingPurchaseEvent.Processed` is emitted only after verification and Google Play finalization;
+observe it for UI or analytics. The server, not the event collector, must grant consumables and
+other paid content idempotently by purchase token. Call `billing.refresh()` when the app returns to
+the foreground if it stays alive for a long time, and call `billing.close()` only when the owning
+application process is shutting down.
+
 ## Render inline ads
 
 ### Jetpack Compose
@@ -269,6 +369,7 @@ starts preparing its replacement after dismissal.
 lifecycleScope.launch {
     when (val result = MonetizeKit.preload(AppAds.levelComplete)) {
         AdLoadResult.Loaded -> enableLevelCompleteTransition()
+        AdLoadResult.Suppressed -> continueWithoutInterstitial()
         is AdLoadResult.Failed -> continueWithoutInterstitial(result.error)
     }
 }
@@ -281,6 +382,7 @@ same ordered direct fallback (or asks the mediation ad unit) and returns a resul
 lifecycleScope.launch {
     when (val result = MonetizeKit.show(this@GameActivity, AppAds.levelComplete)) {
         AdShowResult.Shown -> continueGame()
+        AdShowResult.Suppressed -> continueGameWithoutAd()
         is AdShowResult.Failed -> continueGameWithoutAd(result.error)
     }
 }
@@ -310,13 +412,13 @@ consent-info request. Verify release variants with `BuildConfig.DEBUG == false` 
 ```kotlin
 lifecycleScope.launch {
     MonetizeKit.state.collect { state ->
-        // AwaitingGdprConsent, Ready, or Failed.
+        // AwaitingGdprConsent, Ready, AdsSuppressed, or Failed.
     }
 }
 
 lifecycleScope.launch {
     MonetizeKit.events.collect { event ->
-        // NetworkInitialized, AdPreloaded, AdShown, AdPreloadFailed, or AdShowFailed.
+        // NetworkInitialized, AdsAccessChanged, AdPreloaded, AdShown, or failure events.
     }
 }
 ```
@@ -344,3 +446,6 @@ the height-reserved Compose banner/native slots. It is a verification tool, not 
 - Check that preloading produces one `AdPreloaded` event and that `show()` never presents more than one fullscreen ad.
 - Confirm no debug test IDs or Unity test mode are included in the release variant.
 - Provide an in-app privacy-options entry point when UMP requires it.
+- If billing controls ad access, verify and grant purchases on a secure backend before returning `Verified`.
+- Confirm a `pro_app` purchase grants every expected entitlement and only the configured ad-free
+  entitlement suppresses advertising.

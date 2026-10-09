@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 import org.koin.core.KoinApplication
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
+import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
 
 sealed interface MonetizeKitState {
@@ -35,6 +36,8 @@ sealed interface MonetizeKitState {
     ) : MonetizeKitState
 
     data object GdprConsentRequired : MonetizeKitState
+
+    data object AdsSuppressed : MonetizeKitState
 
     data class Ready(
         val availableNetworks: Set<AdsNetwork>,
@@ -53,6 +56,7 @@ sealed interface AdsEvent {
     data class AdPreloadFailed(val placement: FullscreenPlacement, val error: AdsError) : AdsEvent
     data class AdShown(val placement: AdPlacement, val network: AdsNetwork) : AdsEvent
     data class AdShowFailed(val placement: AdPlacement, val error: AdsError) : AdsEvent
+    data class AdsAccessChanged(val access: AdsAccess) : AdsEvent
 }
 
 /**
@@ -66,16 +70,21 @@ object MonetizeKit {
     private val mutableState = MutableStateFlow<MonetizeKitState>(MonetizeKitState.Uninitialized)
     private val mutableEvents = MutableSharedFlow<AdsEvent>(extraBufferCapacity = 32)
     private val mutableGdprConsent = MutableStateFlow<GdprConsentState>(GdprConsentState.NotRequested)
+    private val mutableAdsAccess = MutableStateFlow<AdsAccess>(AdsAccess.Allowed)
     private val consentMutex = Mutex()
     private val fullscreenShowMutex = Mutex()
     private val fullscreenPlacementMutexes = ConcurrentHashMap<PlacementId, Mutex>()
 
     private var container: KoinApplication? = null
     private var initializationJob: Job? = null
+    private var lastResumedActivity: WeakReference<Activity>? = null
+    private var consentLifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
+    private var automaticConsentRequestStarted = false
 
     val state: StateFlow<MonetizeKitState> = mutableState.asStateFlow()
     val events: SharedFlow<AdsEvent> = mutableEvents.asSharedFlow()
     val gdprConsent: StateFlow<GdprConsentState> = mutableGdprConsent.asStateFlow()
+    val adsAccess: StateFlow<AdsAccess> = mutableAdsAccess.asStateFlow()
 
     /** Called automatically by an included network module. Host apps should not need this method. */
     @JvmStatic
@@ -119,6 +128,8 @@ object MonetizeKit {
                 consentManager = GdprConsentManager(application, configuration.gdpr),
             )
 
+            mutableAdsAccess.value = configuration.adsAccessProvider.access.value
+
             container = koinApplication {
                 modules(
                     module {
@@ -127,7 +138,12 @@ object MonetizeKit {
                     },
                 )
             }
-            mutableState.value = MonetizeKitState.AwaitingGdprConsent(configuredNetworks)
+            mutableState.value = if (isAdsAllowed()) {
+                MonetizeKitState.AwaitingGdprConsent(configuredNetworks)
+            } else {
+                MonetizeKitState.AdsSuppressed
+            }
+            observeAdsAccess(runtime)
             registerFirstActivityConsentFlow(application)
         }
     }
@@ -137,6 +153,10 @@ object MonetizeKit {
      * automatically for the first resumed activity; call it explicitly to control launch timing.
      */
     suspend fun gatherGdprConsent(activity: Activity): ConsentSnapshot = consentMutex.withLock {
+        if (!isAdsAllowed()) {
+            mutableState.value = MonetizeKitState.AdsSuppressed
+            return@withLock suppressedConsentSnapshot()
+        }
         val runtime = currentRuntime()
             ?: return@withLock ConsentSnapshot(
                 canRequestAds = false,
@@ -163,6 +183,7 @@ object MonetizeKit {
 
     /** Call only from a user action, for example an in-app Privacy settings row. */
     suspend fun showPrivacyOptions(activity: Activity): ConsentSnapshot = consentMutex.withLock {
+        if (!isAdsAllowed()) return@withLock suppressedConsentSnapshot()
         val runtime = currentRuntime()
             ?: return@withLock ConsentSnapshot(
                 canRequestAds = false,
@@ -323,7 +344,10 @@ object MonetizeKit {
                 }
             }
         }
-        mutableState.value = if (runtime.readyNetworks.isEmpty()) {
+        if (!isAdsAllowed()) {
+            runtime.adapters.values.forEach(AdsNetworkAdapter::clearFullscreenCache)
+            mutableState.value = MonetizeKitState.AdsSuppressed
+        } else if (runtime.readyNetworks.isEmpty()) {
             MonetizeKitState.Failed(errors)
         } else {
             MonetizeKitState.Ready(runtime.readyNetworks.toSet(), errors)
@@ -331,8 +355,16 @@ object MonetizeKit {
     }
 
     private fun startAdaptersIfAllowed(application: Application, runtime: AdsRuntime) {
+        if (!isAdsAllowed()) return
         synchronized(lock) {
-            if (initializationJob != null) return
+            if (initializationJob?.isActive == true) return
+            if (runtime.readyNetworks.isNotEmpty()) {
+                mutableState.value = MonetizeKitState.Ready(
+                    availableNetworks = runtime.readyNetworks.toSet(),
+                    unavailableNetworks = emptyMap(),
+                )
+                return
+            }
             val configuredNetworks = runtime.configuration.configuredNetworks()
             mutableState.value = MonetizeKitState.Initializing(configuredNetworks)
             initializationJob = scope.launch {
@@ -342,30 +374,26 @@ object MonetizeKit {
     }
 
     private fun registerFirstActivityConsentFlow(application: Application) {
-        application.registerActivityLifecycleCallbacks(
-            object : Application.ActivityLifecycleCallbacks {
-                private var consumed = false
+        val callbacks = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) {
+                lastResumedActivity = WeakReference(activity)
+                startAutomaticConsentFlow(activity)
+            }
 
-                override fun onActivityResumed(activity: Activity) {
-                    if (consumed) return
-                    consumed = true
-                    application.unregisterActivityLifecycleCallbacks(this)
-                    scope.launch { gatherGdprConsent(activity) }
-                }
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
 
-                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityStarted(activity: Activity) = Unit
 
-                override fun onActivityStarted(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
 
-                override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
 
-                override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
 
-                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
-
-                override fun onActivityDestroyed(activity: Activity) = Unit
-            },
-        )
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        }
+        consentLifecycleCallbacks = callbacks
+        application.registerActivityLifecycleCallbacks(callbacks)
     }
 
     private suspend fun showInternal(
@@ -373,6 +401,7 @@ object MonetizeKit {
         placement: FullscreenPlacement,
         onReward: (AdReward) -> Unit,
     ): AdShowResult = withContext(Dispatchers.Main.immediate) {
+        if (!isAdsAllowed()) return@withContext AdShowResult.Suppressed
         val runtime = currentRuntime()
             ?: return@withContext failShow(placement, AdsError(message = "MonetizeKit is not initialized."))
         val definition = runtime.configuration.placements[placement.id]
@@ -418,9 +447,11 @@ object MonetizeKit {
                     }
 
                     is AdShowResult.Failed -> lastError = showResult.error
+                    AdShowResult.Suppressed -> return@withContext AdShowResult.Suppressed
                 }
 
                 is AdLoadResult.Failed -> lastError = loadResult.error
+                AdLoadResult.Suppressed -> return@withContext AdShowResult.Suppressed
             }
         }
         failShow(placement, lastError)
@@ -428,6 +459,7 @@ object MonetizeKit {
 
     private suspend fun preloadInternal(placement: FullscreenPlacement): AdLoadResult =
         withContext(Dispatchers.Main.immediate) {
+            if (!isAdsAllowed()) return@withContext AdLoadResult.Suppressed
             val runtime = currentRuntime()
                 ?: return@withContext failPreload(
                     placement,
@@ -478,6 +510,40 @@ object MonetizeKit {
     }
 
     private fun currentRuntime(): AdsRuntime? = container?.koin?.get()
+
+    private fun observeAdsAccess(runtime: AdsRuntime) {
+        scope.launch {
+            runtime.configuration.adsAccessProvider.access.collect { access ->
+                mutableAdsAccess.value = access
+                mutableEvents.emit(AdsEvent.AdsAccessChanged(access))
+                if (access == AdsAccess.Suppressed) {
+                    runtime.adapters.values.forEach(AdsNetworkAdapter::clearFullscreenCache)
+                    mutableState.value = MonetizeKitState.AdsSuppressed
+                } else {
+                    lastResumedActivity?.get()?.let(::startAutomaticConsentFlow)
+                }
+            }
+        }
+    }
+
+    private fun startAutomaticConsentFlow(activity: Activity) {
+        if (!isAdsAllowed()) return
+        val callbacks = synchronized(lock) {
+            if (automaticConsentRequestStarted) return
+            automaticConsentRequestStarted = true
+            consentLifecycleCallbacks.also { consentLifecycleCallbacks = null }
+        }
+        callbacks?.let(activity.application::unregisterActivityLifecycleCallbacks)
+        scope.launch { gatherGdprConsent(activity) }
+    }
+
+    private fun isAdsAllowed(): Boolean = mutableAdsAccess.value == AdsAccess.Allowed
+
+    private fun suppressedConsentSnapshot(): ConsentSnapshot = ConsentSnapshot(
+        canRequestAds = false,
+        isPrivacyOptionsRequired = false,
+        error = AdsError(message = "Ads are disabled by the application's access policy."),
+    )
 
     private fun AdsConfiguration.configuredNetworks(): Set<AdsNetwork> = buildSet {
         if (adMob != null) add(AdsNetwork.ADMOB)

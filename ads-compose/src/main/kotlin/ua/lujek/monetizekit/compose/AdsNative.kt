@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import ua.lujek.monetizekit.core.MonetizeKit
+import ua.lujek.monetizekit.core.AdsAccess
 import ua.lujek.monetizekit.core.NativePlacement
 
 /**
@@ -20,7 +21,10 @@ fun AdsNative(
     modifier: Modifier = Modifier,
 ) {
     val kitState by MonetizeKit.state.collectAsState()
+    val adsAccess by MonetizeKit.adsAccess.collectAsState()
     val context = LocalContext.current
+
+    if (adsAccess != AdsAccess.Allowed) return
 
     key(placement.id.value, kitState) {
         AndroidView(

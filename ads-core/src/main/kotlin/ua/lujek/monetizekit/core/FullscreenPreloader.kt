@@ -61,6 +61,11 @@ internal suspend fun preloadFirstFullscreenCandidate(
             }
 
             is AdLoadResult.Failed -> lastError = loadResult.error
+            AdLoadResult.Suppressed -> {
+                return FullscreenPreloadResult.Failed(
+                    AdsError(message = "Fullscreen loading was suppressed by the ad access policy."),
+                )
+            }
         }
     }
 

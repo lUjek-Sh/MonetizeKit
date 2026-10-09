@@ -104,4 +104,6 @@ private class FakeAdapter(
         placement: NativePlacement,
         adUnitId: String,
     ): NativeAdController? = null
+
+    override fun clearFullscreenCache() = Unit
 }
