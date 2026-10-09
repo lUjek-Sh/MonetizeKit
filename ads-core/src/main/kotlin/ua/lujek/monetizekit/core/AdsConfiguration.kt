@@ -132,7 +132,7 @@ class AdsConfigurationBuilder {
 
 @MonetizeKitDsl
 class AdMobConfigurationBuilder {
-    lateinit var applicationId: String
+    var applicationId: String? = null
     private val mutableTestDeviceIds = linkedSetOf<String>()
 
     fun testDevice(vararg deviceIds: String) {
@@ -140,7 +140,9 @@ class AdMobConfigurationBuilder {
     }
 
     internal fun build(): AdMobConfiguration = AdMobConfiguration(
-        applicationId = applicationId.requireValue("AdMob application id"),
+        applicationId = requireNotNull(applicationId) {
+            "AdMob application id must be provided."
+        }.requireValue("AdMob application id"),
         testDeviceIds = mutableTestDeviceIds.toSet(),
     )
 }
@@ -160,11 +162,13 @@ class MetaConfigurationBuilder {
 
 @MonetizeKitDsl
 class UnityConfigurationBuilder {
-    lateinit var gameId: String
+    var gameId: String? = null
     var isTestMode: Boolean = false
 
     internal fun build(): UnityConfiguration = UnityConfiguration(
-        gameId = gameId.requireValue("Unity Game ID"),
+        gameId = requireNotNull(gameId) {
+            "Unity Game ID must be provided."
+        }.requireValue("Unity Game ID"),
         isTestMode = isTestMode,
     )
 }

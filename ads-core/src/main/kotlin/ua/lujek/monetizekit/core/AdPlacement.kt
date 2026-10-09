@@ -19,8 +19,6 @@ enum class AdFormat {
     INTERSTITIAL,
     REWARDED,
     NATIVE,
-    APP_OPEN,
-    REWARDED_INTERSTITIAL,
 }
 
 sealed class AdPlacement protected constructor(
