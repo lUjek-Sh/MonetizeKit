@@ -12,6 +12,8 @@ import kotlinx.coroutines.launch
 import ua.lujek.monetizekit.core.AdLoadResult
 import ua.lujek.monetizekit.core.AdShowResult
 import ua.lujek.monetizekit.core.AdsEvent
+import ua.lujek.monetizekit.core.ConsentSnapshot
+import ua.lujek.monetizekit.core.GdprConsentState
 import ua.lujek.monetizekit.core.MonetizeKit
 import ua.lujek.monetizekit.core.MonetizeKitState
 
@@ -19,15 +21,30 @@ data class SampleAdsUiState(
     val adsEnabled: Boolean,
     val isSdkReady: Boolean,
     val sdkStatus: String,
+    val privacyStatus: String,
+    val privacyProfile: SamplePrivacyProfile,
+    val networkTestSetup: String,
     val lastAction: String,
     val lastEvent: String,
+    val inlineReloadKey: Int,
 )
 
-enum class SampleAdsAction {
-    PRELOAD_FULLSCREEN,
-    SHOW_INTERSTITIAL,
-    SHOW_REWARDED,
-    OPEN_PRIVACY_OPTIONS,
+sealed interface SampleAdsAction {
+    data object OpenAdInspector : SampleAdsAction
+    data object PreloadAllFullscreen : SampleAdsAction
+    data object ReloadInlineAds : SampleAdsAction
+    data object ShowAdMobInterstitial : SampleAdsAction
+    data object ShowAdMobRewarded : SampleAdsAction
+    data object ShowAdMobRewardedInterstitial : SampleAdsAction
+    data object ShowAdMobAppOpen : SampleAdsAction
+    data object ShowMetaInterstitial : SampleAdsAction
+    data object ShowMetaRewarded : SampleAdsAction
+    data object ShowUnityInterstitial : SampleAdsAction
+    data object ShowUnityRewarded : SampleAdsAction
+    data object GatherConsent : SampleAdsAction
+    data object OpenPrivacyOptions : SampleAdsAction
+    data class SelectPrivacyProfile(val profile: SamplePrivacyProfile) : SampleAdsAction
+    data object RestartWithPrivacyProfile : SampleAdsAction
 }
 
 class SampleAdsViewModel : ViewModel() {
@@ -36,8 +53,12 @@ class SampleAdsViewModel : ViewModel() {
             adsEnabled = BuildConfig.DEBUG,
             isSdkReady = false,
             sdkStatus = if (BuildConfig.DEBUG) "Waiting for UMP consent" else "Ads are disabled in release",
+            privacyStatus = "Consent has not been requested",
+            privacyProfile = SamplePrivacyProfileStore.current(),
+            networkTestSetup = SampleDebugConfiguration.networkSummary,
             lastAction = "No fullscreen request yet",
             lastEvent = "No SDK event yet",
+            inlineReloadKey = 0,
         ),
     )
 
@@ -65,6 +86,11 @@ class SampleAdsViewModel : ViewModel() {
                 mutableUiState.update { it.copy(lastEvent = event.label()) }
             }
         }
+        viewModelScope.launch {
+            MonetizeKit.gdprConsent.collect { consent ->
+                mutableUiState.update { it.copy(privacyStatus = consent.label()) }
+            }
+        }
     }
 
     fun onAction(activity: Activity, action: SampleAdsAction) {
@@ -72,58 +98,219 @@ class SampleAdsViewModel : ViewModel() {
             mutableUiState.update { it.copy(lastAction = "Debug ads are unavailable in release") }
             return
         }
-        if (action != SampleAdsAction.OPEN_PRIVACY_OPTIONS && !uiState.value.isSdkReady) {
-            mutableUiState.update { it.copy(lastAction = "Wait until the SDK is ready before requesting fullscreen ads") }
+        if (action.requiresReadySdk() && !uiState.value.isSdkReady) {
+            mutableUiState.update { it.copy(lastAction = "Wait until the SDK is ready before requesting ads or Ad Inspector") }
             return
         }
         viewModelScope.launch {
             when (action) {
-                SampleAdsAction.PRELOAD_FULLSCREEN -> preloadFullscreen()
-                SampleAdsAction.SHOW_INTERSTITIAL -> showInterstitial(activity)
-                SampleAdsAction.SHOW_REWARDED -> showRewarded(activity)
-                SampleAdsAction.OPEN_PRIVACY_OPTIONS -> showPrivacyOptions(activity)
+                SampleAdsAction.OpenAdInspector -> openAdInspector(activity)
+                SampleAdsAction.PreloadAllFullscreen -> preloadFullscreen()
+                SampleAdsAction.ReloadInlineAds -> reloadInlineAds()
+                SampleAdsAction.ShowAdMobInterstitial -> showAdMobInterstitial(activity)
+                SampleAdsAction.ShowAdMobRewarded -> showAdMobRewarded(activity)
+                SampleAdsAction.ShowAdMobRewardedInterstitial -> showAdMobRewardedInterstitial(activity)
+                SampleAdsAction.ShowAdMobAppOpen -> showAdMobAppOpen(activity)
+                SampleAdsAction.ShowMetaInterstitial -> showMetaInterstitial(activity)
+                SampleAdsAction.ShowMetaRewarded -> showMetaRewarded(activity)
+                SampleAdsAction.ShowUnityInterstitial -> showUnityInterstitial(activity)
+                SampleAdsAction.ShowUnityRewarded -> showUnityRewarded(activity)
+                SampleAdsAction.GatherConsent -> gatherConsent(activity)
+                SampleAdsAction.OpenPrivacyOptions -> showPrivacyOptions(activity)
+                is SampleAdsAction.SelectPrivacyProfile -> selectPrivacyProfile(activity, action.profile)
+                SampleAdsAction.RestartWithPrivacyProfile -> DebugPrivacyProfileRestart.restart(activity)
             }
         }
     }
 
     private suspend fun preloadFullscreen() {
-        val interstitial = MonetizeKit.preload(DebugSamplePlacements.interstitial)
-        val rewarded = MonetizeKit.preload(DebugSamplePlacements.rewarded)
+        val results = mutableListOf<String>()
+        suspend fun record(name: String, load: suspend () -> AdLoadResult) {
+            results += "$name ${load().label()}"
+        }
+
+        record("AdMob interstitial") { MonetizeKit.preload(DebugSamplePlacements.adMobInterstitial) }
+        record("AdMob rewarded") { MonetizeKit.preload(DebugSamplePlacements.adMobRewarded) }
+        record("AdMob rewarded interstitial") {
+            MonetizeKit.preload(DebugSamplePlacements.adMobRewardedInterstitial)
+        }
+        record("AdMob app open") { MonetizeKit.preload(DebugSamplePlacements.adMobAppOpen) }
+        SampleDebugConfiguration.meta?.interstitial?.let {
+            record("Meta interstitial") { MonetizeKit.preload(DebugSamplePlacements.metaInterstitial) }
+        }
+        SampleDebugConfiguration.meta?.rewarded?.let {
+            record("Meta rewarded") { MonetizeKit.preload(DebugSamplePlacements.metaRewarded) }
+        }
+        SampleDebugConfiguration.unity?.interstitial?.let {
+            record("Unity interstitial") { MonetizeKit.preload(DebugSamplePlacements.unityInterstitial) }
+        }
+        SampleDebugConfiguration.unity?.rewarded?.let {
+            record("Unity rewarded") { MonetizeKit.preload(DebugSamplePlacements.unityRewarded) }
+        }
+        mutableUiState.update {
+            it.copy(lastAction = "Preload: ${results.joinToString()}")
+        }
+    }
+
+    private fun openAdInspector(activity: Activity) {
+        mutableUiState.update { it.copy(lastAction = "Opening Ad Inspector") }
+        AdInspectorLauncher.open(activity) { message ->
+            mutableUiState.update { it.copy(lastAction = message) }
+        }
+    }
+
+    private fun reloadInlineAds() {
         mutableUiState.update {
             it.copy(
-                lastAction = "Preload: interstitial ${interstitial.label()}, rewarded ${rewarded.label()}",
+                inlineReloadKey = it.inlineReloadKey + 1,
+                lastAction = "Reloading configured inline ad slots",
             )
         }
     }
 
-    private suspend fun showInterstitial(activity: Activity) {
-        val result = MonetizeKit.show(activity, DebugSamplePlacements.interstitial)
-        mutableUiState.update { it.copy(lastAction = "Interstitial ${result.label()}") }
+    private suspend fun showAdMobInterstitial(activity: Activity) {
+        val result = MonetizeKit.show(activity, DebugSamplePlacements.adMobInterstitial)
+        mutableUiState.update { it.copy(lastAction = "AdMob interstitial ${result.label()}") }
     }
 
-    private suspend fun showRewarded(activity: Activity) {
+    private suspend fun showAdMobRewarded(activity: Activity) {
         var receivedReward: Pair<Int, String?>? = null
-        val result = MonetizeKit.show(activity, DebugSamplePlacements.rewarded) { reward ->
+        val result = MonetizeKit.show(activity, DebugSamplePlacements.adMobRewarded) { reward ->
             receivedReward = (reward.amount ?: 1) to reward.type
         }
         mutableUiState.update {
             val reward = receivedReward
             it.copy(
                 lastAction = if (reward == null) {
-                    "Rewarded ${result.label()}"
+                    "AdMob rewarded ${result.label()}"
                 } else {
-                    "Reward received: ${reward.first} ${reward.second.orEmpty()}"
+                    "AdMob reward: ${reward.first} ${reward.second.orEmpty()}"
                 },
             )
         }
     }
 
+    private suspend fun showAdMobRewardedInterstitial(activity: Activity) {
+        var receivedReward: Pair<Int, String?>? = null
+        val result = MonetizeKit.show(activity, DebugSamplePlacements.adMobRewardedInterstitial) { reward ->
+            receivedReward = (reward.amount ?: 1) to reward.type
+        }
+        mutableUiState.update {
+            val reward = receivedReward
+            it.copy(
+                lastAction = if (reward == null) {
+                    "AdMob rewarded interstitial ${result.label()}"
+                } else {
+                    "AdMob rewarded interstitial reward: ${reward.first} ${reward.second.orEmpty()}"
+                },
+            )
+        }
+    }
+
+    private suspend fun showAdMobAppOpen(activity: Activity) {
+        val result = MonetizeKit.show(activity, DebugSamplePlacements.adMobAppOpen)
+        mutableUiState.update { it.copy(lastAction = "AdMob App Open ${result.label()}") }
+    }
+
+    private suspend fun showMetaInterstitial(activity: Activity) {
+        if (SampleDebugConfiguration.meta?.interstitial == null) return notConfigured("Meta interstitial")
+        val result = MonetizeKit.show(activity, DebugSamplePlacements.metaInterstitial)
+        mutableUiState.update { it.copy(lastAction = "Meta interstitial ${result.label()}") }
+    }
+
+    private suspend fun showMetaRewarded(activity: Activity) {
+        if (SampleDebugConfiguration.meta?.rewarded == null) return notConfigured("Meta rewarded")
+        showRewarded(
+            activity = activity,
+            placement = DebugSamplePlacements.metaRewarded,
+            networkName = "Meta",
+        )
+    }
+
+    private suspend fun showUnityInterstitial(activity: Activity) {
+        if (SampleDebugConfiguration.unity?.interstitial == null) return notConfigured("Unity interstitial")
+        val result = MonetizeKit.show(activity, DebugSamplePlacements.unityInterstitial)
+        mutableUiState.update { it.copy(lastAction = "Unity interstitial ${result.label()}") }
+    }
+
+    private suspend fun showUnityRewarded(activity: Activity) {
+        if (SampleDebugConfiguration.unity?.rewarded == null) return notConfigured("Unity rewarded")
+        showRewarded(
+            activity = activity,
+            placement = DebugSamplePlacements.unityRewarded,
+            networkName = "Unity",
+        )
+    }
+
+    private suspend fun showRewarded(
+        activity: Activity,
+        placement: ua.lujek.monetizekit.core.RewardedPlacement,
+        networkName: String,
+    ) {
+        var receivedReward: Pair<Int, String?>? = null
+        val result = MonetizeKit.show(activity, placement) { reward ->
+            receivedReward = (reward.amount ?: 1) to reward.type
+        }
+        mutableUiState.update {
+            val reward = receivedReward
+            it.copy(
+                lastAction = if (reward == null) {
+                    "$networkName rewarded ${result.label()}"
+                } else {
+                    "$networkName reward: ${reward.first} ${reward.second.orEmpty()}"
+                },
+            )
+        }
+    }
+
+    private suspend fun gatherConsent(activity: Activity) {
+        val result = MonetizeKit.gatherGdprConsent(activity)
+        mutableUiState.update { it.copy(lastAction = "Consent flow ${result.label()}") }
+    }
+
     private suspend fun showPrivacyOptions(activity: Activity) {
         val result = MonetizeKit.showPrivacyOptions(activity)
         mutableUiState.update {
-            it.copy(lastAction = if (result.canRequestAds) "Privacy options completed" else "Privacy options unavailable")
+            it.copy(lastAction = "Privacy options ${result.label()}")
         }
     }
+
+    private fun selectPrivacyProfile(activity: Activity, profile: SamplePrivacyProfile) {
+        SamplePrivacyProfileStore.save(activity.applicationContext, profile)
+        mutableUiState.update {
+            it.copy(
+                privacyProfile = profile,
+                lastAction = "${profile.label} selected. Restart the debug sample to apply it.",
+            )
+        }
+    }
+
+    private fun notConfigured(networkFormat: String) {
+        mutableUiState.update {
+            it.copy(lastAction = "$networkFormat is not configured in local.properties")
+        }
+    }
+}
+
+private fun SampleAdsAction.requiresReadySdk(): Boolean = when (this) {
+    SampleAdsAction.OpenAdInspector,
+    SampleAdsAction.PreloadAllFullscreen,
+    SampleAdsAction.ReloadInlineAds,
+    SampleAdsAction.ShowAdMobInterstitial,
+    SampleAdsAction.ShowAdMobRewarded,
+    SampleAdsAction.ShowAdMobRewardedInterstitial,
+    SampleAdsAction.ShowAdMobAppOpen,
+    SampleAdsAction.ShowMetaInterstitial,
+    SampleAdsAction.ShowMetaRewarded,
+    SampleAdsAction.ShowUnityInterstitial,
+    SampleAdsAction.ShowUnityRewarded,
+    -> true
+
+    SampleAdsAction.GatherConsent,
+    SampleAdsAction.OpenPrivacyOptions,
+    is SampleAdsAction.SelectPrivacyProfile,
+    SampleAdsAction.RestartWithPrivacyProfile,
+    -> false
 }
 
 private fun MonetizeKitState.label(): String = when (this) {
@@ -171,4 +358,17 @@ private fun AdShowResult.label(): String = when (this) {
     AdShowResult.Suppressed -> "suppressed"
     is AdShowResult.Capped -> "capped until $nextAllowedAtEpochMillis"
     is AdShowResult.Failed -> "failed (${error.message})"
+}
+
+private fun ConsentSnapshot.label(): String = buildString {
+    append(if (canRequestAds) "completed" else "blocked")
+    append(", privacy options ")
+    append(if (isPrivacyOptionsRequired) "required" else "not required")
+    error?.let { append(": ${it.message}") }
+}
+
+private fun GdprConsentState.label(): String = when (this) {
+    GdprConsentState.NotRequested -> "Consent has not been requested"
+    GdprConsentState.Gathering -> "Consent is being gathered"
+    is GdprConsentState.Resolved -> snapshot.label()
 }

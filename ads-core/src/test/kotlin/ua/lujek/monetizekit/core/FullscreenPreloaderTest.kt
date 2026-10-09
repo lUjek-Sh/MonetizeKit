@@ -61,6 +61,24 @@ class FullscreenPreloaderTest {
         assertEquals(listOf("admob"), calls)
     }
 
+    @Test
+    fun `App Open can be preloaded by a supporting adapter`() = runBlocking {
+        val appOpen = AdsPlacements.appOpen("app_return")
+        val calls = mutableListOf<String>()
+        val adMob = FakeAdapter(AdsNetwork.ADMOB, calls, AdLoadResult.Loaded, AdFormat.APP_OPEN)
+
+        val result = preloadFirstFullscreenCandidate(
+            placement = appOpen,
+            candidates = listOf(candidate(AdsNetwork.ADMOB, "admob_app_open")),
+            adapters = mapOf(AdsNetwork.ADMOB to adMob),
+            readyNetworks = setOf(AdsNetwork.ADMOB),
+            eventReporter = AdsEventReporter { },
+        )
+
+        assertTrue(result is FullscreenPreloadResult.Loaded)
+        assertEquals(listOf("admob_app_open"), calls)
+    }
+
     private fun candidate(network: AdsNetwork, id: String): NetworkPlacement = NetworkPlacement(
         network = network,
         adUnitId = id,
@@ -72,8 +90,9 @@ private class FakeAdapter(
     override val network: AdsNetwork,
     private val calls: MutableList<String>,
     private val result: AdLoadResult,
+    format: AdFormat = AdFormat.INTERSTITIAL,
 ) : AdsNetworkAdapter {
-    override val supportedFormats: Set<AdFormat> = setOf(AdFormat.INTERSTITIAL)
+    override val supportedFormats: Set<AdFormat> = setOf(format)
 
     override suspend fun initialize(
         application: Application,

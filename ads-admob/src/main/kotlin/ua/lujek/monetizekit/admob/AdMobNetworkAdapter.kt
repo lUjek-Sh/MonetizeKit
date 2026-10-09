@@ -8,9 +8,6 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
 import com.google.android.gms.ads.AdLoader
 import com.google.android.gms.ads.AdListener
 import com.google.android.gms.ads.AdRequest
@@ -23,10 +20,14 @@ import com.google.android.gms.ads.MobileAds
 import com.google.android.gms.ads.OnPaidEventListener
 import com.google.android.gms.ads.RequestConfiguration
 import com.google.android.gms.ads.ResponseInfo
+import com.google.android.gms.ads.appopen.AppOpenAd
+import com.google.android.gms.ads.appopen.AppOpenAd.AppOpenAdLoadCallback
 import com.google.android.gms.ads.interstitial.InterstitialAd
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
 import com.google.android.gms.ads.rewarded.RewardedAd
 import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
+import com.google.android.gms.ads.rewardedinterstitial.RewardedInterstitialAd
+import com.google.android.gms.ads.rewardedinterstitial.RewardedInterstitialAdLoadCallback
 import com.google.android.gms.ads.nativead.NativeAd
 import com.google.android.gms.ads.nativead.NativeAdView
 import com.google.android.gms.ads.nativead.MediaView
@@ -52,15 +53,18 @@ import ua.lujek.monetizekit.core.AdRevenue
 import ua.lujek.monetizekit.core.AdRevenuePrecision
 import ua.lujek.monetizekit.core.BannerPlacement
 import ua.lujek.monetizekit.core.BannerSize
+import ua.lujek.monetizekit.core.AppOpenPlacement
 import ua.lujek.monetizekit.core.CollapsibleBannerAnchor
+import ua.lujek.monetizekit.core.DefaultNativeAdRenderer
 import ua.lujek.monetizekit.core.FullscreenPlacement
 import ua.lujek.monetizekit.core.InterstitialPlacement
 import ua.lujek.monetizekit.core.NetworkInitializationResult
 import ua.lujek.monetizekit.core.NativeAdController
 import ua.lujek.monetizekit.core.NativeAdContent
-import ua.lujek.monetizekit.core.NativeAdRenderBinding
+import ua.lujek.monetizekit.core.NativeAdAppearance
 import ua.lujek.monetizekit.core.NativePlacement
 import ua.lujek.monetizekit.core.RewardedPlacement
+import ua.lujek.monetizekit.core.RewardedInterstitialPlacement
 import ua.lujek.monetizekit.core.UsStatePrivacyMode
 import ua.lujek.monetizekit.core.isFullscreenAdExpired
 import java.util.concurrent.ConcurrentHashMap
@@ -72,12 +76,17 @@ internal class AdMobNetworkAdapter : AdsNetworkAdapter {
         AdFormat.BANNER,
         AdFormat.INTERSTITIAL,
         AdFormat.REWARDED,
+        AdFormat.REWARDED_INTERSTITIAL,
         AdFormat.NATIVE,
+        AdFormat.APP_OPEN,
     )
 
     private var application: Application? = null
+    private var nativeAdAppearance: NativeAdAppearance = NativeAdAppearance()
     private val interstitials = ConcurrentHashMap<String, CachedFullscreenAd<InterstitialAd>>()
     private val rewardedAds = ConcurrentHashMap<String, CachedFullscreenAd<RewardedAd>>()
+    private val rewardedInterstitialAds = ConcurrentHashMap<String, CachedFullscreenAd<RewardedInterstitialAd>>()
+    private val appOpenAds = ConcurrentHashMap<String, CachedFullscreenAd<AppOpenAd>>()
 
     override suspend fun initialize(
         application: Application,
@@ -95,6 +104,7 @@ internal class AdMobNetworkAdapter : AdsNetworkAdapter {
             )
         }
         this.application = application
+        nativeAdAppearance = configuration.nativeAdAppearance
         MobileAds.setRequestConfiguration(
             RequestConfiguration.Builder()
                 .setTestDeviceIds(adMob.testDeviceIds.toList())
@@ -116,6 +126,8 @@ internal class AdMobNetworkAdapter : AdsNetworkAdapter {
     ): AdLoadResult = when (placement) {
         is InterstitialPlacement -> loadInterstitial(adUnitId, placement, eventReporter)
         is RewardedPlacement -> loadRewarded(adUnitId, placement, eventReporter)
+        is RewardedInterstitialPlacement -> loadRewardedInterstitial(adUnitId, placement, eventReporter)
+        is AppOpenPlacement -> loadAppOpen(adUnitId, placement, eventReporter)
     }
 
     override suspend fun showFullscreen(
@@ -127,6 +139,10 @@ internal class AdMobNetworkAdapter : AdsNetworkAdapter {
     ): AdShowResult = when (placement) {
         is InterstitialPlacement -> showInterstitial(activity, placement, adUnitId, eventReporter)
         is RewardedPlacement -> showRewarded(activity, placement, adUnitId, onReward, eventReporter)
+        is RewardedInterstitialPlacement -> {
+            showRewardedInterstitial(activity, placement, adUnitId, onReward, eventReporter)
+        }
+        is AppOpenPlacement -> showAppOpen(activity, placement, adUnitId, eventReporter)
     }
 
     override fun createBannerController(
@@ -141,11 +157,19 @@ internal class AdMobNetworkAdapter : AdsNetworkAdapter {
         placement: NativePlacement,
         adUnitId: String,
         eventReporter: AdsEventReporter,
-    ): NativeAdController = AdMobNativeController(context, placement, adUnitId, eventReporter)
+    ): NativeAdController = AdMobNativeController(
+        context = context,
+        placement = placement,
+        adUnitId = adUnitId,
+        eventReporter = eventReporter,
+        appearance = nativeAdAppearance,
+    )
 
     override fun clearFullscreenCache() {
         interstitials.clear()
         rewardedAds.clear()
+        rewardedInterstitialAds.clear()
+        appOpenAds.clear()
     }
 
     private suspend fun loadInterstitial(
@@ -204,6 +228,66 @@ internal class AdMobNetworkAdapter : AdsNetworkAdapter {
                         if (continuation.isActive) {
                             continuation.resume(AdLoadResult.Failed(error(loadAdError)))
                         }
+                    }
+                },
+            )
+        }
+    }
+
+    private suspend fun loadRewardedInterstitial(
+        adUnitId: String,
+        placement: RewardedInterstitialPlacement,
+        eventReporter: AdsEventReporter,
+    ): AdLoadResult {
+        if (rewardedInterstitialAds.fresh(adUnitId) != null) return AdLoadResult.Loaded
+        val context = application ?: return AdLoadResult.Failed(error("AdMob is not initialized."))
+        return suspendCancellableCoroutine { continuation ->
+            RewardedInterstitialAd.load(
+                context,
+                adUnitId,
+                AdRequest.Builder().build(),
+                object : RewardedInterstitialAdLoadCallback() {
+                    override fun onAdLoaded(ad: RewardedInterstitialAd) {
+                        ad.onPaidEventListener = paidEventListener(placement, eventReporter)
+                        rewardedInterstitialAds[adUnitId] = CachedFullscreenAd(ad, SystemClock.elapsedRealtime())
+                        eventReporter.report(AdsEvent.AdLoaded(placement, network, ad.responseInfo.toDiagnostics()))
+                        if (continuation.isActive) continuation.resume(AdLoadResult.Loaded)
+                    }
+
+                    override fun onAdFailedToLoad(loadAdError: LoadAdError) {
+                        val failure = error(loadAdError)
+                        eventReporter.report(AdsEvent.AdLoadFailed(placement, failure))
+                        if (continuation.isActive) continuation.resume(AdLoadResult.Failed(failure))
+                    }
+                },
+            )
+        }
+    }
+
+    private suspend fun loadAppOpen(
+        adUnitId: String,
+        placement: AppOpenPlacement,
+        eventReporter: AdsEventReporter,
+    ): AdLoadResult {
+        if (appOpenAds.fresh(adUnitId) != null) return AdLoadResult.Loaded
+        val context = application ?: return AdLoadResult.Failed(error("AdMob is not initialized."))
+        return suspendCancellableCoroutine { continuation ->
+            AppOpenAd.load(
+                context,
+                adUnitId,
+                AdRequest.Builder().build(),
+                object : AppOpenAdLoadCallback() {
+                    override fun onAdLoaded(ad: AppOpenAd) {
+                        ad.onPaidEventListener = paidEventListener(placement, eventReporter)
+                        appOpenAds[adUnitId] = CachedFullscreenAd(ad, SystemClock.elapsedRealtime())
+                        eventReporter.report(AdsEvent.AdLoaded(placement, network, ad.responseInfo.toDiagnostics()))
+                        if (continuation.isActive) continuation.resume(AdLoadResult.Loaded)
+                    }
+
+                    override fun onAdFailedToLoad(loadAdError: LoadAdError) {
+                        val failure = error(loadAdError)
+                        eventReporter.report(AdsEvent.AdLoadFailed(placement, failure))
+                        if (continuation.isActive) continuation.resume(AdLoadResult.Failed(failure))
                     }
                 },
             )
@@ -279,6 +363,67 @@ internal class AdMobNetworkAdapter : AdsNetworkAdapter {
         }
     }
 
+    private suspend fun showRewardedInterstitial(
+        activity: Activity,
+        placement: RewardedInterstitialPlacement,
+        adUnitId: String,
+        onReward: (AdReward) -> Unit,
+        eventReporter: AdsEventReporter,
+    ): AdShowResult {
+        val cachedAd = rewardedInterstitialAds.remove(adUnitId)
+            ?: return AdShowResult.Failed(error("Rewarded interstitial ad is not loaded."))
+        if (cachedAd.isExpired()) {
+            return AdShowResult.Failed(error("Rewarded interstitial ad expired before it could be shown."))
+        }
+        val ad = cachedAd.ad
+        return suspendCancellableCoroutine { continuation ->
+            ad.fullScreenContentCallback = fullscreenContentCallback(placement, eventReporter, continuation)
+            ad.show(activity) { rewardItem ->
+                val reward = AdReward(amount = rewardItem.amount, type = rewardItem.type)
+                eventReporter.report(AdsEvent.AdRewardEarned(placement, network, reward))
+                onReward(reward)
+            }
+        }
+    }
+
+    private suspend fun showAppOpen(
+        activity: Activity,
+        placement: AppOpenPlacement,
+        adUnitId: String,
+        eventReporter: AdsEventReporter,
+    ): AdShowResult {
+        val cachedAd = appOpenAds.remove(adUnitId)
+            ?: return AdShowResult.Failed(error("App Open ad is not loaded."))
+        if (cachedAd.isExpired()) return AdShowResult.Failed(error("App Open ad expired before it could be shown."))
+        val ad = cachedAd.ad
+        return suspendCancellableCoroutine { continuation ->
+            ad.fullScreenContentCallback = fullscreenContentCallback(placement, eventReporter, continuation)
+            ad.show(activity)
+        }
+    }
+
+    private fun fullscreenContentCallback(
+        placement: AdPlacement,
+        eventReporter: AdsEventReporter,
+        continuation: kotlinx.coroutines.CancellableContinuation<AdShowResult>,
+    ): FullScreenContentCallback = object : FullScreenContentCallback() {
+        override fun onAdImpression() {
+            eventReporter.report(AdsEvent.AdImpression(placement, network))
+        }
+
+        override fun onAdClicked() {
+            eventReporter.report(AdsEvent.AdClicked(placement, network))
+        }
+
+        override fun onAdDismissedFullScreenContent() {
+            if (continuation.isActive) continuation.resume(AdShowResult.Shown)
+        }
+
+        override fun onAdFailedToShowFullScreenContent(adError: com.google.android.gms.ads.AdError) {
+            if (continuation.isActive) continuation.resume(AdShowResult.Failed(error(adError)))
+        }
+    }
+
     private fun error(message: String): AdsError = AdsError(network = network, message = message)
 
     private fun error(loadAdError: LoadAdError): AdsError = AdsError(
@@ -332,6 +477,7 @@ private class AdMobNativeController(
     private val placement: NativePlacement,
     private val adUnitId: String,
     private val eventReporter: AdsEventReporter,
+    private val appearance: NativeAdAppearance,
 ) : NativeAdController {
     private val mutableState = MutableStateFlow<AdViewState>(AdViewState.Idle)
     private var nativeAd: NativeAd? = null
@@ -348,9 +494,12 @@ private class AdMobNativeController(
                 nativeAd?.destroy()
                 nativeAd = loadedAd
                 val binding = placement.renderer?.render(context, loadedAd.toContent())
-                    ?: defaultBinding(loadedAd.toContent())
+                    ?: DefaultNativeAdRenderer.render(context, loadedAd.toContent(), appearance)
                 require(binding.root.parent == null) {
                     "NativeAdRenderer must return a new unattached root view."
+                }
+                requireNotNull(binding.headlineView) {
+                    "NativeAdRenderer must provide a headlineView for a native ad."
                 }
                 nativeAdView.removeAllViews()
                 nativeAdView.addView(
@@ -360,6 +509,9 @@ private class AdMobNativeController(
                 nativeAdView.headlineView = binding.headlineView
                 nativeAdView.bodyView = binding.bodyView
                 nativeAdView.callToActionView = binding.callToActionView
+                nativeAdView.advertiserView = binding.advertiserView
+                nativeAdView.iconView = binding.iconView
+                nativeAdView.mediaView = null
                 binding.mediaContainer?.let { container ->
                     val mediaView = MediaView(context)
                     container.addView(
@@ -416,25 +568,6 @@ private class AdMobNativeController(
         nativeAd = null
     }
 
-    private fun defaultBinding(content: NativeAdContent): NativeAdRenderBinding {
-        val headlineView = TextView(context).apply { text = content.headline }
-        val bodyView = TextView(context).apply { text = content.body.orEmpty() }
-        val callToActionView = TextView(context).apply { text = content.callToAction.orEmpty() }
-        val mediaContainer = FrameLayout(context)
-        return NativeAdRenderBinding(
-            root = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(mediaContainer)
-                addView(headlineView)
-                addView(bodyView)
-                addView(callToActionView)
-            },
-            headlineView = headlineView,
-            bodyView = bodyView,
-            callToActionView = callToActionView,
-            mediaContainer = mediaContainer,
-        )
-    }
 }
 
 private fun NativeAd.toContent(): NativeAdContent = NativeAdContent(
@@ -445,6 +578,7 @@ private fun NativeAd.toContent(): NativeAdContent = NativeAdContent(
     advertiser = advertiser,
     price = price,
     store = store,
+    icon = icon?.drawable,
 )
 
 @Suppress("DEPRECATION")

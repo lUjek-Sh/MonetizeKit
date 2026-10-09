@@ -12,6 +12,8 @@ class AdsConfigurationTest {
     private val homeBanner = AdsPlacements.banner("home_banner", reservedHeightDp = 50)
     private val levelComplete = AdsPlacements.interstitial("level_complete")
     private val feedNative = AdsPlacements.native("feed_native", reservedHeightDp = 280)
+    private val levelBonus = AdsPlacements.rewardedInterstitial("level_bonus")
+    private val appReturn = AdsPlacements.appOpen("app_return")
 
     @Test
     fun `direct configuration supports only the networks and formats used by an app`() {
@@ -100,6 +102,27 @@ class AdsConfigurationTest {
     }
 
     @Test
+    fun `native appearance is retained by configuration`() {
+        val appearance = NativeAdAppearance(
+            cardBackgroundColor = 0xFF112233.toInt(),
+            callToActionColor = 0xFF445566.toInt(),
+            cardCornerRadiusDp = 24,
+        )
+
+        val configuration = monetizeConfiguration {
+            nativeAppearance(appearance)
+            direct {
+                meta()
+            }
+            native(feedNative) {
+                meta("META_FEED_NATIVE")
+            }
+        }
+
+        assertSame(appearance, configuration.nativeAdAppearance)
+    }
+
+    @Test
     fun `ads access is application owned and optional`() {
         val accessProvider = object : AdsAccessProvider {
             override val access = MutableStateFlow<AdsAccess>(AdsAccess.Suppressed)
@@ -165,6 +188,56 @@ class AdsConfigurationTest {
         assertEquals(BannerSize.AnchoredAdaptive, anchored.size)
         assertEquals(CollapsibleBannerAnchor.BOTTOM, anchored.collapsibleAnchor)
         assertEquals(BannerSize.InlineAdaptive(maxHeightDp = 250), inline.size)
+    }
+
+    @Test
+    fun `rewarded interstitial and App Open keep their typed configuration`() {
+        val policy = AppOpenPlacementPolicy(
+            showOnAppForeground = false,
+            showOnColdStart = true,
+            fullscreenPolicy = FullscreenPlacementPolicy(
+                frequencyCap = FullscreenFrequencyCap(cooldownMillis = 60_000L),
+            ),
+        )
+        val configuration = monetizeConfiguration {
+            direct {
+                admob {
+                    applicationId = "ca-app-pub-123456789~123456789"
+                }
+            }
+            rewardedInterstitial(levelBonus) {
+                admob("ca-app-pub-123456789/111111111")
+            }
+            appOpen(appReturn, policy) {
+                admob("ca-app-pub-123456789/222222222")
+            }
+        }
+
+        assertEquals(AdFormat.REWARDED_INTERSTITIAL, levelBonus.format)
+        assertEquals(AdFormat.APP_OPEN, appReturn.format)
+        assertSame(policy, configuration.placements.getValue(appReturn.id).appOpenPolicy)
+        assertEquals(
+            policy.fullscreenPolicy,
+            configuration.placements.getValue(appReturn.id).fullscreenPolicy,
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `only one App Open placement can present automatically`() {
+        val secondAppOpen = AdsPlacements.appOpen("second_app_return")
+        monetizeConfiguration {
+            direct {
+                admob {
+                    applicationId = "ca-app-pub-123456789~123456789"
+                }
+            }
+            appOpen(appReturn) {
+                admob("ca-app-pub-123456789/111111111")
+            }
+            appOpen(secondAppOpen) {
+                admob("ca-app-pub-123456789/222222222")
+            }
+        }
     }
 
     @Test(expected = IllegalArgumentException::class)

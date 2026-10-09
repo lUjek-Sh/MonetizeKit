@@ -17,6 +17,7 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
     }
 
     buildTypes {
@@ -46,7 +47,6 @@ dependencies {
     implementation(libs.androidx.compose.runtime)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
-    implementation(project(":ads-admob"))
     implementation(project(":ads-compose"))
     implementation(project(":ads-core"))
 
@@ -55,4 +55,8 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    debugImplementation(libs.google.mobile.ads)
+    debugImplementation(project(":ads-admob"))
+    debugImplementation(project(":ads-meta"))
+    debugImplementation(project(":ads-unity"))
 }

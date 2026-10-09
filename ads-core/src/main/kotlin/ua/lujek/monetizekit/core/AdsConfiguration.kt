@@ -86,6 +86,7 @@ data class PlacementDefinition internal constructor(
     val placement: AdPlacement,
     val candidates: List<NetworkPlacement>,
     val fullscreenPolicy: FullscreenPlacementPolicy?,
+    val appOpenPolicy: AppOpenPlacementPolicy?,
 )
 
 class AdsConfiguration internal constructor(
@@ -94,6 +95,7 @@ class AdsConfiguration internal constructor(
     val meta: MetaConfiguration?,
     val unity: UnityConfiguration?,
     val gdpr: GdprConfiguration,
+    val nativeAdAppearance: NativeAdAppearance,
     val adsAccessProvider: AdsAccessProvider,
     internal val placements: Map<PlacementId, PlacementDefinition>,
 ) {
@@ -120,8 +122,10 @@ class AdsConfigurationBuilder {
         usStatePrivacyMode = UsStatePrivacyMode.NONE,
         externalConsentProvider = null,
     )
+    private var nativeAdAppearance: NativeAdAppearance = NativeAdAppearance()
     private var adsAccessProvider: AdsAccessProvider = AdsAccessProviders.alwaysAllowed
     private var isGdprConfigured = false
+    private var isNativeAdAppearanceConfigured = false
     private var isAdsAccessConfigured = false
     private val placementDefinitions = linkedMapOf<PlacementId, PlacementDefinition>()
 
@@ -163,6 +167,17 @@ class AdsConfigurationBuilder {
     fun privacy(block: GdprConfigurationBuilder.() -> Unit) = gdpr(block)
 
     /**
+     * Sets the appearance used only by MonetizeKit's built-in native card renderer. Pass a
+     * [NativeAdAppearance] with only the values the application needs to override; a placement
+     * using its own NativeAdRenderer remains fully independent from this setting.
+     */
+    fun nativeAppearance(appearance: NativeAdAppearance) {
+        check(!isNativeAdAppearanceConfigured) { "Native ad appearance is configured more than once." }
+        isNativeAdAppearanceConfigured = true
+        nativeAdAppearance = appearance
+    }
+
+    /**
      * Observes whether ads may be requested. Use this only when an application has an ad-removal
      * entitlement; omit it when billing sells unrelated products or when billing is absent.
      */
@@ -194,9 +209,31 @@ class AdsConfigurationBuilder {
         block: PlacementCandidatesBuilder.() -> Unit,
     ) = addPlacement(placement, fullscreenPolicy = policy, block = block)
 
+    fun rewardedInterstitial(
+        placement: RewardedInterstitialPlacement,
+        policy: FullscreenPlacementPolicy = FullscreenPlacementPolicy(),
+        block: PlacementCandidatesBuilder.() -> Unit,
+    ) = addPlacement(placement, fullscreenPolicy = policy, block = block)
+
+    /**
+     * Registers an App Open placement. By default MonetizeKit preloads it and presents it only
+     * when the app later returns to foreground; the initial cold start is intentionally skipped.
+     */
+    fun appOpen(
+        placement: AppOpenPlacement,
+        policy: AppOpenPlacementPolicy = AppOpenPlacementPolicy(),
+        block: PlacementCandidatesBuilder.() -> Unit,
+    ) = addPlacement(
+        placement = placement,
+        fullscreenPolicy = policy.fullscreenPolicy,
+        appOpenPolicy = policy,
+        block = block,
+    )
+
     private fun addPlacement(
         placement: AdPlacement,
         fullscreenPolicy: FullscreenPlacementPolicy?,
+        appOpenPolicy: AppOpenPlacementPolicy? = null,
         block: PlacementCandidatesBuilder.() -> Unit,
     ) {
         check(placementDefinitions[placement.id] == null) {
@@ -206,6 +243,7 @@ class AdsConfigurationBuilder {
             placement = placement,
             candidates = PlacementCandidatesBuilder().apply(block).build(),
             fullscreenPolicy = fullscreenPolicy,
+            appOpenPolicy = appOpenPolicy,
         )
     }
 
@@ -219,10 +257,18 @@ class AdsConfigurationBuilder {
             meta = metaConfiguration,
             unity = unityConfiguration,
             gdpr = gdprConfiguration,
+            nativeAdAppearance = nativeAdAppearance,
             adsAccessProvider = adsAccessProvider,
             placements = placementDefinitions.toMap(),
         )
         require(configuration.placements.isNotEmpty()) { "Configure at least one ad placement." }
+        configuration.placements.values.count { definition ->
+            definition.placement is AppOpenPlacement && definition.appOpenPolicy?.showOnAppForeground == true
+        }.let { automaticAppOpenCount ->
+            require(automaticAppOpenCount <= 1) {
+                "Configure at most one App Open placement with showOnAppForeground = true."
+            }
+        }
         configuration.placements.values.forEach { definition ->
             definition.candidates.forEach { candidate ->
                 require(candidate.route.matches(selectedMode)) {
@@ -236,6 +282,20 @@ class AdsConfigurationBuilder {
             if (selectedMode == AdsDeliveryMode.ADMOB_MEDIATION) {
                 require(definition.candidates.size == 1) {
                     "AdMob Mediation owns fallback and bidding. Configure exactly one ad unit for '${definition.placement.id}'."
+                }
+            }
+            if (definition.placement is FullscreenPlacement) {
+                requireNotNull(definition.fullscreenPolicy) {
+                    "Fullscreen placement '${definition.placement.id}' needs a fullscreen policy."
+                }
+            }
+            if (definition.placement is AppOpenPlacement) {
+                requireNotNull(definition.appOpenPolicy) {
+                    "App Open placement '${definition.placement.id}' needs an App Open policy."
+                }
+            } else {
+                require(definition.appOpenPolicy == null) {
+                    "Only an App Open placement can have an App Open policy."
                 }
             }
         }

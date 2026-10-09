@@ -94,6 +94,7 @@ internal class UnityNetworkAdapter : AdsNetworkAdapter {
     ): AdLoadResult = when (placement) {
         is InterstitialPlacement -> loadInterstitial(adUnitId, placement, eventReporter)
         is RewardedPlacement -> loadRewarded(adUnitId, placement, eventReporter)
+        else -> AdLoadResult.Failed(error("Unity does not support ${placement.format}."))
     }
 
     override suspend fun showFullscreen(
@@ -105,6 +106,7 @@ internal class UnityNetworkAdapter : AdsNetworkAdapter {
     ): AdShowResult = when (placement) {
         is InterstitialPlacement -> showInterstitial(activity, placement, adUnitId, eventReporter)
         is RewardedPlacement -> showRewarded(activity, placement, adUnitId, onReward, eventReporter)
+        else -> AdShowResult.Failed(error("Unity does not support ${placement.format}."))
     }
 
     override fun createBannerController(

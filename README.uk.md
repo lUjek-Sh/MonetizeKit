@@ -132,6 +132,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("io.insert-koin:koin-core:4.2.2")
     implementation("androidx.lifecycle:lifecycle-runtime:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-process:2.11.0")
     implementation("androidx.datastore:datastore-preferences:1.2.1")
     implementation("com.google.android.ump:user-messaging-platform:4.0.0")
 
@@ -229,6 +230,8 @@ object AppAds {
     val articleNative = AdsPlacements.native("article_native", reservedHeightDp = 280)
     val levelComplete = AdsPlacements.interstitial("level_complete")
     val rewardCoins = AdsPlacements.rewarded("reward_coins")
+    val levelBonus = AdsPlacements.rewardedInterstitial("level_bonus")
+    val appReturn = AdsPlacements.appOpen("app_return")
 }
 ```
 
@@ -236,6 +239,22 @@ object AppAds {
 завантажується, не заповнюється або недоступна, тому контент екрана не стрибає. Висота стає нульовою
 лише тоді, коли налаштована access policy явно вимикає рекламу, наприклад після активного paid
 entitlement-а.
+
+### Підтримувані формати
+
+| Placement MonetizeKit | AdMob direct | Meta direct | Unity direct | Примітка |
+| --- | --- | --- | --- | --- |
+| `banner` | Так | Так | Так | Inline; резервуйте висоту. |
+| `native` | Так | Так | Ні | Inline; резервуйте висоту. |
+| `interstitial` | Так | Так | Так | Явний fullscreen-перехід. |
+| `rewarded` | Так | Так | Так | Користувач сам погоджується на перегляд. |
+| `rewardedInterstitial` | Так | Ні | Ні | Потрібен екран пояснення винагороди з можливістю пропустити. |
+| `appOpen` | Так | Ні | Ні | Для foreground/loading моментів застосунку. |
+
+В AdMob Mediation кожен формат запитується через один `admobMediation(...)` unit. Наявність
+конкретного джерела залежить від підтримки формату, налаштованої в консолі AdMob. У direct-режимі
+MonetizeKit пропускає кандидата, адаптер якого не підтримує формат, і переходить до наступного;
+не додавайте Meta або Unity до `appOpen` чи `rewardedInterstitial`.
 
 ## Ініціалізація: direct
 
@@ -293,6 +312,12 @@ class App : Application() {
                 unity("UNITY_REWARD_COINS_PLACEMENT")
                 meta("META_REWARD_COINS_PLACEMENT")
             }
+            rewardedInterstitial(AppAds.levelBonus) {
+                admob("ca-app-pub-xxxxxxxxxxxxxxxx/555")
+            }
+            appOpen(AppAds.appReturn) {
+                admob("ca-app-pub-xxxxxxxxxxxxxxxx/666")
+            }
         }
     }
 }
@@ -309,8 +334,9 @@ Direct-режим — це priority fallback, а не ціновий аукці�
 2. У разі no-fill або помилки він знищується, після чого завантажується наступний.
 3. Після успішного завантаження banner/native кандидат фіксується для цього slot-а. Пізні callback-и
    не можуть його замінити.
-4. Fullscreen кандидат стає лише `Ready`; він показується виключно після явного `show()`.
-5. Process-wide mutex дозволяє показувати лише один interstitial або rewarded одночасно.
+4. Fullscreen кандидат стає лише `Ready`; він показується лише після явного `show()`, окрім
+   `appOpen`, для якого увімкнено автоматичний показ при foreground.
+5. Process-wide mutex дозволяє показувати одночасно лише один fullscreen creative.
 
 Отже, бібліотека навмисно не використовує небезпечний підхід «показати кожну мережу, callback
 якої прийшов». Кілька незалежних slot-ів можливі, бо вони є різними місцями на екрані.
@@ -519,11 +545,54 @@ bannerSlot.bindTo(viewLifecycleOwner)
 pause/resume сумісним ad view і звільняє creative при знищенні lifecycle або від'єднанні View.
 Викликайте `release()` самостійно лише тоді, коли жоден із цих випадків не може настати.
 
+### Налаштування вбудованої native-картки
+
+Якщо не передати власний `NativeAdRenderer`, MonetizeKit показує темну заокруглену native-картку:
+видима позначка реклами, справжня іконка рекламодавця, заголовок, рекламне медіа, опис і CTA.
+Її вигляд можна задати один раз під час ініціалізації:
+
+```kotlin
+MonetizeKit.initialize(this) {
+    nativeAppearance(
+        NativeAdAppearance(
+            cardBackgroundColor = 0xFF17171F.toInt(),
+            cardStrokeColor = 0xFF4C4C57.toInt(),
+            primaryTextColor = 0xFFF6F4F9.toInt(),
+            secondaryTextColor = 0xFFCFCAD6.toInt(),
+            attributionBackgroundColor = 0xFF3A3A44.toInt(),
+            attributionTextColor = 0xFFEEEBF2.toInt(),
+            iconContainerColor = 0xFF5B3DA9.toInt(),
+            mediaPlaceholderColor = 0xFF121218.toInt(),
+            callToActionColor = 0xFF714ECF.toInt(),
+            contentPaddingDp = 14,
+            cardCornerRadiusDp = 20,
+            headlineTextSizeSp = 18f,
+        ),
+    )
+
+    // direct { ... } або admobMediation { ... }
+}
+```
+
+Кольори — це Android ARGB `Int`; усі розміри, крім `*TextSizeSp`, вказуються в dp. Передавайте
+лише потрібні властивості: решта зберігають policy-safe значення за замовчуванням. Налаштування
+впливає на всі native-картки, створені вбудованим renderer-ом, зокрема на native creative,
+отриманий через AdMob Mediation. Placement із власним `NativeAdRenderer` повністю керує своєю
+розміткою і не читає `NativeAdAppearance`.
+
+Звичайний `Banner` не можна стилізувати як цю картку: creative, розмір і склад банера належать
+рекламній мережі. Для нього використовуйте `BannerSize` і зарезервовану висоту; для такого дизайну
+використовуйте native placement.
+
 ### Власна native-розмітка
 
 Передайте `NativeAdRenderer` під час оголошення native placement. Renderer створює лише візуальну
 розмітку; MonetizeKit володіє network-native wrapper, media view, реєстрацією кліків і очищенням.
-Кожен виклик `render` має повертати новий View, який ще не прикріплений до parent.
+Кожен виклик `render` має повертати новий View, який ще не прикріплений до parent. Якщо renderer
+не передано, використовується описана вище вбудована картка. Власний renderer має показати чітку
+локалізовану позначку `Ad`/`Sponsored`, надати `headlineView`, зарезервувати реальний простір для
+`mediaContainer` і не показувати optional asset View, коли для нього немає значення. Якщо renderer
+показує іконку рекламодавця, поверніть її через `iconView`.
 
 ```kotlin
 val articleNative = AdsPlacements.native(
@@ -531,17 +600,18 @@ val articleNative = AdsPlacements.native(
     reservedHeightDp = 280,
     renderer = NativeAdRenderer { context, ad ->
         val headline = TextView(context).apply { text = ad.headline }
-        val body = TextView(context).apply { text = ad.body.orEmpty() }
-        val cta = Button(context).apply { text = ad.callToAction.orEmpty() }
+        val body = ad.body?.takeIf(String::isNotBlank)?.let { TextView(context).apply { text = it } }
+        val cta = ad.callToAction?.takeIf(String::isNotBlank)?.let { Button(context).apply { text = it } }
         val media = FrameLayout(context)
 
         NativeAdRenderBinding(
             root = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                addView(media)
+                addView(TextView(context).apply { text = "Ad" }) // Локалізуйте у production-застосунку.
                 addView(headline)
-                addView(body)
-                addView(cta)
+                addView(media, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+                body?.let { addView(it) }
+                cta?.let { addView(it) }
             },
             headlineView = headline,
             bodyView = body,
@@ -553,7 +623,8 @@ val articleNative = AdsPlacements.native(
 ```
 
 `mediaContainer` обов'язковий для Meta native ads. Той самий placement працює в Compose `AdsNative`,
-бо він показує зареєстрований native View через `AndroidView`.
+бо він показує зареєстрований native View через `AndroidView`. Перед релізом перевірте test ads у
+AdMob Native Ad Validator: він повідомляє про policy та layout-проблеми в debug-збірці.
 
 ### Adaptive і collapsible banners
 
@@ -634,8 +705,9 @@ lifecycleScope.launch {
 }
 ```
 
-`show()` завжди викликається явно. Він використає підготовлений creative, якщо він є; інакше
-виконає той самий ordered direct fallback або звернеться до mediation ad unit:
+`show()` для interstitial, rewarded і rewarded-interstitial викликається явно. Він використає
+підготовлений creative, якщо він є; інакше виконає той самий ordered direct fallback або звернеться
+до mediation ad unit:
 
 ```kotlin
 lifecycleScope.launch {
@@ -653,6 +725,50 @@ lifecycleScope.launch {
     }
 }
 ```
+
+### Rewarded interstitial
+
+Показуйте rewarded interstitial лише після екрана, який належить застосунку, чітко пояснює
+винагороду й дає можливість пропустити рекламу. Це не opt-in rewarded ad, тому SDK навмисно не
+створює такий policy-critical UI самостійно.
+
+```kotlin
+// Викликайте лише після того, як гравець погодився у reward prompt.
+lifecycleScope.launch {
+    MonetizeKit.show(this@GameActivity, AppAds.levelBonus) { reward ->
+        grantLevelBonus(reward.amount ?: 1)
+    }
+}
+
+// Кнопка Skip у prompt продовжує сценарій без show().
+```
+
+### App Open
+
+`appOpen(...)` автоматично preload-иться після consent і за замовчуванням показує один creative,
+коли застосунок наступного разу повертається у foreground. Він навмисно пропускає перший cold
+start, не перетинається з іншим fullscreen-форматом, використовує той самий frequency cap/retry
+policy та reload-иться після показу. Автоматичним може бути лише один App Open placement.
+
+```kotlin
+appOpen(
+    placement = AppAds.appReturn,
+    policy = AppOpenPlacementPolicy(
+        showOnAppForeground = true,
+        showOnColdStart = false,
+        fullscreenPolicy = FullscreenPlacementPolicy(
+            frequencyCap = FullscreenFrequencyCap(cooldownMillis = 5 * 60_000L),
+        ),
+    ),
+) {
+    admob("ca-app-pub-xxxxxxxxxxxxxxxx/666")
+}
+```
+
+Вкажіть `showOnAppForeground = false`, щоб самостійно керувати моментом показу: тоді викликайте
+`MonetizeKit.preload(AppAds.appReturn)` і `MonetizeKit.show(activity, AppAds.appReturn)` зі свого
+loading/foreground flow. Не показуйте App Open, якщо користувач уже дістався інтерактивного
+контенту під час cold start.
 
 ## Безпечне тестування
 
@@ -686,10 +802,82 @@ lifecycleScope.launch {
 }
 ```
 
-`AdsEvent.AdPaid` надає currency, micros і SDK precision для підтримуваних network format-ів.
-`AdsEvent.AdLoaded` та `AdsError` можуть містити безпечні response diagnostics: наприклад AdMob
-response ID і mediation adapter class. Не використовуйте ці значення для відтворення чи логування
-ad creative.
+`AdsEvent.AdPaid` надає currency, micros і SDK precision для format-ів, SDK яких повідомляє
+impression-level paid value. `AdsEvent.AdLoaded` та `AdsError` можуть містити безпечні response
+diagnostics: наприклад AdMob response ID і mediation adapter class. Не використовуйте ці значення
+для відтворення чи логування ad creative.
+
+### Дохід від реклами у Firebase / Google Analytics
+
+Залишайте Firebase-інтеграцію у **host-застосунку**, а не в MonetizeKit. Firebase є необов'язковим,
+саме host володіє Firebase project і політикою Analytics consent, а ту саму нормалізовану подію
+можна також надіслати в MMP чи backend. MonetizeKit навмисно не має Firebase dependency.
+
+Для кожного AdMob impression оберіть рівно один шлях звітування:
+
+| Шлях доставки | Налаштування Firebase revenue |
+| --- | --- |
+| Direct AdMob або AdMob Mediation (зокрема Meta/Unity через AdMob) | Зв'яжіть AdMob app із Firebase/Google Analytics. Firebase автоматично записує `ad_impression`, зокрема mediation revenue. **Не** пересилайте `AdsEvent.AdPaid` вручну — дохід буде продубльований. |
+| Direct Meta або direct Unity у цій версії | Не створюйте дохід зі значення eCPM або з `AdsEvent.AdImpression`. Їх direct adapters зараз не емітять `AdsEvent.AdPaid`, тому точний client-side Firebase revenue event недоступний. Використовуйте звіти мережі, mediation через AdMob або інтеграцію, що надає impression-level revenue. |
+| Adapter, що емітить справжній `AdsEvent.AdPaid` і не звітується Firebase автоматично | Пересилайте цю подію із застосунку, як показано нижче. |
+
+Для автоматичного AdMob-звітування виконайте [інструкцію Firebase зі зв'язування AdMob](https://firebase.google.com/docs/analytics/measure-ad-revenue#automatically-track-ad-revenue).
+Для manual reporter додайте Firebase Analytics до застосунку через актуальний Firebase BoM:
+
+```kotlin
+dependencies {
+    implementation(platform("com.google.firebase:firebase-bom:<current-version>"))
+    implementation("com.google.firebase:firebase-analytics")
+}
+```
+
+Встановлюйте collector один раз в application-owned scope лише тоді, коли підходить третій рядок
+таблиці. Він перетворює micros на `Double` в одиницях валюти, яких потребує Firebase. Спершу
+викличте `FirebaseAnalytics.setConsent(...)`, якщо цього потребує ваша Analytics-consent policy:
+UMP consent, яким керує MonetizeKit, не замінює налаштування Firebase Analytics consent.
+
+```kotlin
+import android.app.Application
+import android.os.Bundle
+import com.google.firebase.analytics.FirebaseAnalytics
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.launch
+import ua.lujek.monetizekit.core.AdsEvent
+import ua.lujek.monetizekit.core.MonetizeKit
+
+class App : Application() {
+    private val analyticsScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    override fun onCreate() {
+        super.onCreate()
+
+        val analytics = FirebaseAnalytics.getInstance(this)
+        analyticsScope.launch {
+            MonetizeKit.events
+                .filterIsInstance<AdsEvent.AdPaid>()
+                .collect { event -> analytics.logManualAdRevenue(event) }
+        }
+    }
+}
+
+private fun FirebaseAnalytics.logManualAdRevenue(event: AdsEvent.AdPaid) {
+    logEvent(FirebaseAnalytics.Event.AD_IMPRESSION, Bundle().apply {
+        putString(FirebaseAnalytics.Param.AD_PLATFORM, event.network.name.lowercase())
+        putString(FirebaseAnalytics.Param.AD_SOURCE, event.network.name)
+        putString(FirebaseAnalytics.Param.AD_UNIT_NAME, event.placement.id.value)
+        putString(FirebaseAnalytics.Param.AD_FORMAT, event.placement.format.name.lowercase())
+        putDouble(FirebaseAnalytics.Param.VALUE, event.revenue.valueMicros / 1_000_000.0)
+        putString(FirebaseAnalytics.Param.CURRENCY, event.revenue.currencyCode)
+    })
+}
+```
+
+Ніколи не використовуйте manual collector разом з автоматичною інтеграцією AdMob-to-Firebase.
+Перевіряйте manual events у DebugView; для ad-revenue Firebase потребує числовий `value` та
+`currency` за ISO-4217.
 
 ## Debug sample
 
@@ -702,8 +890,23 @@ ad unit ID для banner, native, interstitial і rewarded; ці значенн�
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-Sample показує SDK/UMP state, preload, явний показ fullscreen-реклами, privacy options та Compose
-banner/native slots із зарезервованою висотою. Це інструмент перевірки, а не production app code.
+Sample показує SDK/UMP state, Compose banner/native slots із зарезервованою висотою та можливістю
+reload, явний показ fullscreen-реклами й кнопку **Open Ad Inspector**. Ad Inspector діагностує
+Google Mobile Ads і AdMob Mediation, але не перевіряє запити, які напряму виконує Meta або Unity.
+Для них у sample є окремі direct placements і кнопки, тому їхні test-запити не змішуються з
+AdMob Mediation.
+
+Щоб перевірити direct Meta або Unity, заповніть лише потрібні формати в `DebugMetaIds` і
+`DebugUnityIds` у [`SampleApplication.kt`](app/src/main/kotlin/ua/lujek/monetizekit/sample/SampleApplication.kt).
+Порожній ID залишає відповідну кнопку вимкненою. Додайте Meta test-device hash перед запитами Meta;
+debug sample вмикає Unity SDK test mode, але test mode також слід увімкнути для Android-застосунку
+в Unity dashboard. Ці адаптери та inspector існують лише у debug variant sample.
+
+Кнопки **Privacy test profile** зберігають обраний профіль і перезапускають debug process, щоб policy
+було застосовано до ініціалізації мереж. Є стандартний UMP, примусовий UMP EEA, COPPA, TFUA, US
+restricted data processing, US GPP та external-CMP contract. Перед forced UMP geography додайте UMP
+test-device hash у `DebugUmpIds`. External-CMP profile — лише інтерактивна перевірка lifecycle
+`PrivacyConsentProvider`: він не є сертифікованим CMP і його не можна переносити у production.
 
 ## Перевірка перед релізом
 

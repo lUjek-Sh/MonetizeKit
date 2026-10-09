@@ -47,6 +47,12 @@ class ConsumerSmokeApplication : Application() {
                 meta(META_REWARDED_PLACEMENT)
                 unity(UNITY_REWARDED_PLACEMENT)
             }
+            rewardedInterstitial(ConsumerSmokePlacements.rewardedInterstitial) {
+                admob(ADMOB_REWARDED_INTERSTITIAL_AD_UNIT)
+            }
+            appOpen(ConsumerSmokePlacements.appOpen) {
+                admob(ADMOB_APP_OPEN_AD_UNIT)
+            }
         }
     }
 }
@@ -56,6 +62,8 @@ private object ConsumerSmokePlacements {
     val native = AdsPlacements.native(id = "consumer_native", reservedHeightDp = 280)
     val interstitial = AdsPlacements.interstitial(id = "consumer_interstitial")
     val rewarded = AdsPlacements.rewarded(id = "consumer_rewarded")
+    val rewardedInterstitial = AdsPlacements.rewardedInterstitial(id = "consumer_rewarded_interstitial")
+    val appOpen = AdsPlacements.appOpen(id = "consumer_app_open")
 }
 
 private const val ADMOB_APPLICATION_ID = "ca-app-pub-3940256099942544~3347511713"
@@ -63,6 +71,8 @@ private const val ADMOB_BANNER_AD_UNIT = "ca-app-pub-3940256099942544/6300978111
 private const val ADMOB_NATIVE_AD_UNIT = "ca-app-pub-3940256099942544/2247696110"
 private const val ADMOB_INTERSTITIAL_AD_UNIT = "ca-app-pub-3940256099942544/1033173712"
 private const val ADMOB_REWARDED_AD_UNIT = "ca-app-pub-3940256099942544/5224354917"
+private const val ADMOB_REWARDED_INTERSTITIAL_AD_UNIT = "ca-app-pub-3940256099942544/5354046379"
+private const val ADMOB_APP_OPEN_AD_UNIT = "ca-app-pub-3940256099942544/9257395921"
 private const val META_BANNER_PLACEMENT = "META_CONSUMER_BANNER"
 private const val META_NATIVE_PLACEMENT = "META_CONSUMER_NATIVE"
 private const val META_INTERSTITIAL_PLACEMENT = "META_CONSUMER_INTERSTITIAL"

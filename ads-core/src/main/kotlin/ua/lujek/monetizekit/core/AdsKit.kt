@@ -4,6 +4,9 @@ import android.app.Activity
 import android.app.Application
 import android.os.Bundle
 import android.content.Context
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -77,7 +80,7 @@ sealed interface AdsEvent {
     data class AdImpression(val placement: AdPlacement, val network: AdsNetwork) : AdsEvent
     data class AdClicked(val placement: AdPlacement, val network: AdsNetwork) : AdsEvent
     data class AdRewardEarned(
-        val placement: RewardedPlacement,
+        val placement: RewardedFullscreenPlacement,
         val network: AdsNetwork,
         val reward: AdReward,
     ) : AdsEvent
@@ -108,7 +111,12 @@ object MonetizeKit {
     private var initializationJob: Job? = null
     private var lastResumedActivity: WeakReference<Activity>? = null
     private var consentLifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
+    private var appOpenActivityLifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
+    private var appOpenLifecycleObserver: DefaultLifecycleObserver? = null
     private var automaticConsentRequestStarted = false
+    private var hasEnteredProcessForeground = false
+    private var automaticAppOpenPending = false
+    private var automaticAppOpenShowRunning = false
     private val adapterEventReporter = AdsEventReporter { event -> mutableEvents.tryEmit(event) }
 
     val state: StateFlow<MonetizeKitState> = mutableState.asStateFlow()
@@ -176,6 +184,7 @@ object MonetizeKit {
             }
             observeAdsAccess(runtime)
             registerFirstActivityConsentFlow(application)
+            registerAppOpenLifecycle(application, configuration)
         }
     }
 
@@ -249,6 +258,22 @@ object MonetizeKit {
             showInternal(activity, placement, onReward)
     }
 
+    suspend fun show(
+        activity: Activity,
+        placement: RewardedInterstitialPlacement,
+        onReward: (AdReward) -> Unit,
+    ): AdShowResult = fullscreenOperations.show(placement.id) {
+        showInternal(activity, placement, onReward)
+    }
+
+    /** Shows an App Open creative explicitly. Automatic foreground display is configured by appOpen(). */
+    suspend fun show(
+        activity: Activity,
+        placement: AppOpenPlacement,
+    ): AdShowResult = fullscreenOperations.show(placement.id) {
+        showInternal(activity, placement) {}
+    }
+
     /**
      * Prepares an interstitial without showing it. Load attempts for the same placement are
      * serialized, and direct-mode candidates are tried in their configured priority order.
@@ -261,6 +286,14 @@ object MonetizeKit {
      * serialized, and direct-mode candidates are tried in their configured priority order.
      */
     suspend fun preload(placement: RewardedPlacement): AdLoadResult =
+        preloadWithRetryInternal(placement)
+
+    /** Prepares a rewarded interstitial without showing it. */
+    suspend fun preload(placement: RewardedInterstitialPlacement): AdLoadResult =
+        preloadWithRetryInternal(placement)
+
+    /** Prepares an App Open creative without showing it. */
+    suspend fun preload(placement: AppOpenPlacement): AdLoadResult =
         preloadWithRetryInternal(placement)
 
     /**
@@ -367,9 +400,11 @@ object MonetizeKit {
             runtime.adapters.values.forEach(AdsNetworkAdapter::clearFullscreenCache)
             mutableState.value = MonetizeKitState.AdsSuppressed
         } else if (runtime.readyNetworks.isEmpty()) {
-            MonetizeKitState.Failed(errors)
+            mutableState.value = MonetizeKitState.Failed(errors)
         } else {
-            MonetizeKitState.Ready(runtime.readyNetworks.toSet(), errors)
+            mutableState.value = MonetizeKitState.Ready(runtime.readyNetworks.toSet(), errors)
+            preloadConfiguredAppOpenPlacements(runtime)
+            maybeShowAutomaticAppOpen()
         }
     }
 
@@ -382,6 +417,8 @@ object MonetizeKit {
                     availableNetworks = runtime.readyNetworks.toSet(),
                     unavailableNetworks = emptyMap(),
                 )
+                preloadConfiguredAppOpenPlacements(runtime)
+                maybeShowAutomaticAppOpen()
                 return
             }
             val configuredNetworks = runtime.configuration.configuredNetworks()
@@ -397,6 +434,7 @@ object MonetizeKit {
             override fun onActivityResumed(activity: Activity) {
                 lastResumedActivity = WeakReference(activity)
                 startAutomaticConsentFlow(activity)
+                maybeShowAutomaticAppOpen()
             }
 
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
@@ -413,6 +451,75 @@ object MonetizeKit {
         }
         consentLifecycleCallbacks = callbacks
         application.registerActivityLifecycleCallbacks(callbacks)
+    }
+
+    private fun registerAppOpenLifecycle(
+        application: Application,
+        configuration: AdsConfiguration,
+    ) {
+        if (configuration.automaticAppOpenPlacement() == null) return
+        val activityCallbacks = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) {
+                lastResumedActivity = WeakReference(activity)
+                maybeShowAutomaticAppOpen()
+            }
+
+            override fun onActivityPaused(activity: Activity) {
+                if (lastResumedActivity?.get() === activity) lastResumedActivity = null
+            }
+
+            override fun onActivityDestroyed(activity: Activity) {
+                if (lastResumedActivity?.get() === activity) lastResumedActivity = null
+            }
+
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+
+            override fun onActivityStarted(activity: Activity) = Unit
+
+            override fun onActivityStopped(activity: Activity) = Unit
+
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+        }
+        appOpenActivityLifecycleCallbacks = activityCallbacks
+        application.registerActivityLifecycleCallbacks(activityCallbacks)
+        val observer = object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                val isFirstProcessForeground = !hasEnteredProcessForeground
+                hasEnteredProcessForeground = true
+                val policy = configuration.automaticAppOpenPlacement()?.appOpenPolicy ?: return
+                if (!isFirstProcessForeground || policy.showOnColdStart) {
+                    automaticAppOpenPending = true
+                    maybeShowAutomaticAppOpen()
+                }
+            }
+        }
+        appOpenLifecycleObserver = observer
+        ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
+    }
+
+    private fun preloadConfiguredAppOpenPlacements(runtime: AdsRuntime) {
+        runtime.configuration.placements.values
+            .mapNotNull { definition -> definition.placement as? AppOpenPlacement }
+            .forEach { placement ->
+                scope.launch { preloadWithRetryInternal(placement) }
+            }
+    }
+
+    private fun maybeShowAutomaticAppOpen() {
+        if (!automaticAppOpenPending || automaticAppOpenShowRunning || !isAdsAllowed()) return
+        val runtime = currentRuntime() ?: return
+        if (runtime.readyNetworks.isEmpty()) return
+        val placement = runtime.configuration.automaticAppOpenPlacement()?.placement as? AppOpenPlacement ?: return
+        val activity = lastResumedActivity?.get() ?: return
+        automaticAppOpenPending = false
+        automaticAppOpenShowRunning = true
+        scope.launch {
+            try {
+                show(activity, placement)
+            } finally {
+                automaticAppOpenShowRunning = false
+            }
+        }
     }
 
     private suspend fun showInternal(
@@ -605,6 +712,7 @@ object MonetizeKit {
                 mutableEvents.emit(AdsEvent.AdsAccessChanged(access))
                 if (access == AdsAccess.Suppressed) {
                     runtime.adapters.values.forEach(AdsNetworkAdapter::clearFullscreenCache)
+                    automaticAppOpenPending = false
                     mutableState.value = MonetizeKitState.AdsSuppressed
                 } else {
                     lastResumedActivity?.get()?.let(::startAutomaticConsentFlow)
@@ -637,6 +745,11 @@ object MonetizeKit {
         if (meta != null) add(AdsNetwork.META)
         if (unity != null) add(AdsNetwork.UNITY)
     }
+
+    private fun AdsConfiguration.automaticAppOpenPlacement(): PlacementDefinition? =
+        placements.values.singleOrNull { definition ->
+            definition.placement is AppOpenPlacement && definition.appOpenPolicy?.showOnAppForeground == true
+        }
 }
 
 private class AdsRuntime(

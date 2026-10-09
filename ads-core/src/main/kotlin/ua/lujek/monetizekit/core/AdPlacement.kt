@@ -18,7 +18,9 @@ enum class AdFormat {
     BANNER,
     INTERSTITIAL,
     REWARDED,
+    REWARDED_INTERSTITIAL,
     NATIVE,
+    APP_OPEN,
 }
 
 sealed class AdPlacement protected constructor(
@@ -85,8 +87,24 @@ sealed class FullscreenPlacement protected constructor(
 class InterstitialPlacement internal constructor(id: PlacementId) :
     FullscreenPlacement(id, AdFormat.INTERSTITIAL)
 
+sealed class RewardedFullscreenPlacement protected constructor(
+    id: PlacementId,
+    format: AdFormat,
+) : FullscreenPlacement(id, format)
+
 class RewardedPlacement internal constructor(id: PlacementId) :
-    FullscreenPlacement(id, AdFormat.REWARDED)
+    RewardedFullscreenPlacement(id, AdFormat.REWARDED)
+
+/**
+ * A rewarded fullscreen placement shown during a natural transition. Unlike [RewardedPlacement],
+ * the application must present a clear reward message and a skip option before calling show.
+ */
+class RewardedInterstitialPlacement internal constructor(id: PlacementId) :
+    RewardedFullscreenPlacement(id, AdFormat.REWARDED_INTERSTITIAL)
+
+/** A fullscreen ad intended for application foreground and loading moments. */
+class AppOpenPlacement internal constructor(id: PlacementId) :
+    FullscreenPlacement(id, AdFormat.APP_OPEN)
 
 /** Factory for the strongly typed placements used by the host application. */
 object AdsPlacements {
@@ -114,4 +132,10 @@ object AdsPlacements {
     fun interstitial(id: String): InterstitialPlacement = InterstitialPlacement(PlacementId.of(id))
 
     fun rewarded(id: String): RewardedPlacement = RewardedPlacement(PlacementId.of(id))
+
+    fun rewardedInterstitial(id: String): RewardedInterstitialPlacement =
+        RewardedInterstitialPlacement(PlacementId.of(id))
+
+    /** Creates an App Open placement using the Activity orientation selected by Google Mobile Ads. */
+    fun appOpen(id: String): AppOpenPlacement = AppOpenPlacement(PlacementId.of(id))
 }

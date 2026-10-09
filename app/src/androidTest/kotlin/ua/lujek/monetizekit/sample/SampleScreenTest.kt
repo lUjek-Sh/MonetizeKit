@@ -1,14 +1,13 @@
 package ua.lujek.monetizekit.sample
 
-import androidx.activity.ComponentActivity
-import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import org.junit.Rule
 import org.junit.Test
 
 class SampleScreenTest {
     @get:Rule
-    val composeRule = createAndroidComposeRule<ComponentActivity>()
+    val composeRule = createComposeRule()
 
     @Test
     fun rendersDebugControlsWithoutStartingRealAds() {
@@ -19,8 +18,12 @@ class SampleScreenTest {
                         adsEnabled = true,
                         isSdkReady = true,
                         sdkStatus = "Ready: ADMOB",
+                        privacyStatus = "completed",
+                        privacyProfile = SamplePrivacyProfile.UMP_DEFAULT,
+                        networkTestSetup = "AdMob demo",
                         lastAction = "Preload: ready",
                         lastEvent = "debug_interstitial preloaded by ADMOB",
+                        inlineReloadKey = 0,
                     ),
                     onAction = {},
                     showInlineAds = false,

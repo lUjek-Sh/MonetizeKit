@@ -6,9 +6,7 @@ import android.content.Context
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
+import android.widget.ImageView
 import com.facebook.ads.Ad
 import com.facebook.ads.AdError
 import com.facebook.ads.AdListener
@@ -41,11 +39,12 @@ import ua.lujek.monetizekit.core.AdsNetwork
 import ua.lujek.monetizekit.core.AdsNetworkAdapter
 import ua.lujek.monetizekit.core.BannerAdController
 import ua.lujek.monetizekit.core.BannerPlacement
+import ua.lujek.monetizekit.core.DefaultNativeAdRenderer
 import ua.lujek.monetizekit.core.FullscreenPlacement
 import ua.lujek.monetizekit.core.InterstitialPlacement
 import ua.lujek.monetizekit.core.NativeAdController
 import ua.lujek.monetizekit.core.NativeAdContent
-import ua.lujek.monetizekit.core.NativeAdRenderBinding
+import ua.lujek.monetizekit.core.NativeAdAppearance
 import ua.lujek.monetizekit.core.NativePlacement
 import ua.lujek.monetizekit.core.NetworkInitializationResult
 import ua.lujek.monetizekit.core.RewardedPlacement
@@ -63,6 +62,7 @@ internal class MetaNetworkAdapter : AdsNetworkAdapter {
     )
 
     private var application: Application? = null
+    private var nativeAdAppearance: NativeAdAppearance = NativeAdAppearance()
     private val interstitials = ConcurrentHashMap<String, MetaInterstitialEntry>()
     private val rewardedVideos = ConcurrentHashMap<String, MetaRewardedEntry>()
 
@@ -73,6 +73,7 @@ internal class MetaNetworkAdapter : AdsNetworkAdapter {
         val meta = configuration.meta
             ?: return NetworkInitializationResult.Failed(error("Meta configuration is missing."))
         this.application = application
+        nativeAdAppearance = configuration.nativeAdAppearance
         meta.testDeviceHashes.forEach(AdSettings::addTestDevice)
         AudienceNetworkAds.initialize(application)
         return NetworkInitializationResult.Ready
@@ -85,6 +86,7 @@ internal class MetaNetworkAdapter : AdsNetworkAdapter {
     ): AdLoadResult = when (placement) {
         is InterstitialPlacement -> loadInterstitial(adUnitId, placement, eventReporter)
         is RewardedPlacement -> loadRewarded(adUnitId, placement, eventReporter)
+        else -> AdLoadResult.Failed(error("Meta does not support ${placement.format}."))
     }
 
     override suspend fun showFullscreen(
@@ -96,6 +98,7 @@ internal class MetaNetworkAdapter : AdsNetworkAdapter {
     ): AdShowResult = when (placement) {
         is InterstitialPlacement -> showInterstitial(adUnitId)
         is RewardedPlacement -> showRewarded(adUnitId, onReward)
+        else -> AdShowResult.Failed(error("Meta does not support ${placement.format}."))
     }
 
     override fun createBannerController(
@@ -110,7 +113,13 @@ internal class MetaNetworkAdapter : AdsNetworkAdapter {
         placement: NativePlacement,
         adUnitId: String,
         eventReporter: AdsEventReporter,
-    ): NativeAdController = MetaNativeController(context, placement, adUnitId, eventReporter)
+    ): NativeAdController = MetaNativeController(
+        context = context,
+        placement = placement,
+        adUnitId = adUnitId,
+        eventReporter = eventReporter,
+        appearance = nativeAdAppearance,
+    )
 
     override fun clearFullscreenCache() {
         interstitials.values.forEach(MetaInterstitialEntry::destroy)
@@ -173,6 +182,7 @@ private class MetaNativeController(
     private val placement: NativePlacement,
     adUnitId: String,
     private val eventReporter: AdsEventReporter,
+    private val appearance: NativeAdAppearance,
 ) : NativeAdListener, NativeAdController {
     private val mutableState = MutableStateFlow<AdViewState>(AdViewState.Idle)
     private val nativeAd = NativeAd(context, adUnitId)
@@ -189,9 +199,12 @@ private class MetaNativeController(
 
     override fun onAdLoaded(ad: Ad) {
         val binding = placement.renderer?.render(context, nativeAd.toContent())
-            ?: defaultBinding(nativeAd.toContent())
+            ?: DefaultNativeAdRenderer.render(context, nativeAd.toContent(), appearance)
         require(binding.root.parent == null) {
             "NativeAdRenderer must return a new unattached root view."
+        }
+        requireNotNull(binding.headlineView) {
+            "NativeAdRenderer must provide a headlineView for a native ad."
         }
         val mediaContainer = requireNotNull(binding.mediaContainer) {
             "Meta native rendering requires NativeAdRenderBinding.mediaContainer."
@@ -206,11 +219,13 @@ private class MetaNativeController(
             binding.root,
             ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
         )
-        nativeAd.registerViewForInteraction(
-            nativeAdLayout,
-            mediaView,
-            listOf(binding.callToActionView ?: binding.root),
-        )
+        val clickableViews = listOf(binding.callToActionView ?: binding.root)
+        val iconView: ImageView? = binding.iconView
+        if (iconView == null) {
+            nativeAd.registerViewForInteraction(nativeAdLayout, mediaView, clickableViews)
+        } else {
+            nativeAd.registerViewForInteraction(nativeAdLayout, mediaView, iconView, clickableViews)
+        }
         mutableState.value = AdViewState.Loaded
         eventReporter.report(AdsEvent.AdLoaded(placement, AdsNetwork.META))
     }
@@ -240,35 +255,17 @@ private class MetaNativeController(
         nativeAd.destroy()
     }
 
-    private fun defaultBinding(content: NativeAdContent): NativeAdRenderBinding {
-        val headlineView = TextView(context).apply { text = content.headline }
-        val bodyView = TextView(context).apply { text = content.body.orEmpty() }
-        val callToActionView = TextView(context).apply { text = content.callToAction.orEmpty() }
-        val mediaContainer = FrameLayout(context)
-        return NativeAdRenderBinding(
-            root = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(mediaContainer)
-                addView(headlineView)
-                addView(bodyView)
-                addView(callToActionView)
-            },
-            headlineView = headlineView,
-            bodyView = bodyView,
-            callToActionView = callToActionView,
-            mediaContainer = mediaContainer,
-        )
-    }
 }
 
 private fun NativeAd.toContent(): NativeAdContent = NativeAdContent(
     network = AdsNetwork.META,
-    headline = advertiserName.orEmpty(),
+    headline = adHeadline?.takeIf(String::isNotBlank) ?: advertiserName.orEmpty(),
     body = adBodyText,
     callToAction = adCallToAction,
     advertiser = advertiserName,
     price = null,
     store = null,
+    icon = preloadedIconViewDrawable,
 )
 
 private class MetaInterstitialEntry(

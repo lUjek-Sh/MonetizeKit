@@ -72,6 +72,19 @@ data class FullscreenPlacementPolicy(
     val retryPolicy: FullscreenRetryPolicy = FullscreenRetryPolicy(),
 )
 
+/**
+ * Controls an App Open placement owned by MonetizeKit's process lifecycle integration.
+ *
+ * The default skips a cold start and loads the creative eagerly, then shows it on a later return
+ * to the foreground. Set [showOnAppForeground] to false when the host app will call
+ * `MonetizeKit.show(activity, placement)` itself.
+ */
+data class AppOpenPlacementPolicy(
+    val showOnAppForeground: Boolean = true,
+    val showOnColdStart: Boolean = false,
+    val fullscreenPolicy: FullscreenPlacementPolicy = FullscreenPlacementPolicy(),
+)
+
 internal sealed interface FrequencyCapDecision {
     data object Allowed : FrequencyCapDecision
 
