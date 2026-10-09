@@ -85,6 +85,7 @@ data class NetworkPlacement internal constructor(
 data class PlacementDefinition internal constructor(
     val placement: AdPlacement,
     val candidates: List<NetworkPlacement>,
+    val fullscreenPolicy: FullscreenPlacementPolicy?,
 )
 
 class AdsConfiguration internal constructor(
@@ -174,25 +175,28 @@ class AdsConfigurationBuilder {
     fun banner(
         placement: BannerPlacement,
         block: PlacementCandidatesBuilder.() -> Unit,
-    ) = addPlacement(placement, block)
+    ) = addPlacement(placement, fullscreenPolicy = null, block = block)
 
     fun native(
         placement: NativePlacement,
         block: PlacementCandidatesBuilder.() -> Unit,
-    ) = addPlacement(placement, block)
+    ) = addPlacement(placement, fullscreenPolicy = null, block = block)
 
     fun interstitial(
         placement: InterstitialPlacement,
+        policy: FullscreenPlacementPolicy = FullscreenPlacementPolicy(),
         block: PlacementCandidatesBuilder.() -> Unit,
-    ) = addPlacement(placement, block)
+    ) = addPlacement(placement, fullscreenPolicy = policy, block = block)
 
     fun rewarded(
         placement: RewardedPlacement,
+        policy: FullscreenPlacementPolicy = FullscreenPlacementPolicy(),
         block: PlacementCandidatesBuilder.() -> Unit,
-    ) = addPlacement(placement, block)
+    ) = addPlacement(placement, fullscreenPolicy = policy, block = block)
 
     private fun addPlacement(
         placement: AdPlacement,
+        fullscreenPolicy: FullscreenPlacementPolicy?,
         block: PlacementCandidatesBuilder.() -> Unit,
     ) {
         check(placementDefinitions[placement.id] == null) {
@@ -201,6 +205,7 @@ class AdsConfigurationBuilder {
         placementDefinitions[placement.id] = PlacementDefinition(
             placement = placement,
             candidates = PlacementCandidatesBuilder().apply(block).build(),
+            fullscreenPolicy = fullscreenPolicy,
         )
     }
 

@@ -456,13 +456,49 @@ size, коли є fallback-кандидатами, тому резервуйте
 ## Показуйте fullscreen-рекламу
 
 API є suspending. Коли SDK перейшов у `Ready`, завчасно викличте preload fullscreen-placement:
-буде завантажено лише першого доступного кандидата у заданому порядку, без показу реклами. Виклики
-для одного placement виконуються послідовно. Після успішного `show()` creative витрачається, а бібліотека
+буде завантажено лише першого доступного кандидата у заданому порядку, без показу реклами. Мережеві
+спроби завантаження для одного placement виконуються послідовно. Після успішного `show()` creative витрачається, а бібліотека
 автоматично починає готувати наступний після закриття реклами.
 
 Manual direct cache має максимальний строк життя одну годину. MonetizeKit відкидає прострочений
 creative перед наступним `preload()` або `show()` і запитує свіжий; це відповідає рекомендації
 Google Mobile Ads щодо кешування interstitial і rewarded inventory.
+
+### Frequency cap і retry для preload
+
+Налаштуйте policy для конкретного fullscreen placement-а, якщо застосунок не повинен показувати
+рекламу надто часто. Cap перевіряється безпосередньо перед `show()` і записується лише після
+фактичного показу реклами. Невелика історія timestamp-ів, що належить placement-у, зберігається в
+DataStore між перезапусками процесу; вона не містить ані ad, ані device, ані user identifier-ів.
+
+```kotlin
+interstitial(
+    placement = AppAds.levelComplete,
+    policy = FullscreenPlacementPolicy(
+        frequencyCap = FullscreenFrequencyCap(
+            cooldownMillis = 90_000L,
+            maxImpressions = 3,
+            windowMillis = 10 * 60_000L,
+        ),
+        retryPolicy = FullscreenRetryPolicy(
+            maxAttempts = 3,          // включає перший preload-запит
+            initialDelayMillis = 2_000L,
+            maxDelayMillis = 15_000L,
+        ),
+    ),
+) {
+    unity("UNITY_LEVEL_COMPLETE_PLACEMENT")
+    meta("META_LEVEL_COMPLETE_PLACEMENT")
+    admob("ca-app-pub-xxxxxxxxxxxxxxxx/333")
+}
+```
+
+`FullscreenFrequencyCap` може використовувати cooldown, ковзне правило
+`maxImpressions`/`windowMillis` або обидва варіанти. Якщо спрацьовує cap, `show()` повертає
+`AdShowResult.Capped(nextAllowedAtEpochMillis)` без рекламного запиту. `FullscreenRetryPolicy`
+застосовується тільки до явного `preload()` та автоматичного preload після успішного показу;
+явний `show()` ніколи не чекає retry delay. Повторюються лише retryable network-load помилки з
+експоненційним backoff. Policy за замовчуванням має одну спробу та зберігає попередню поведінку без retry.
 
 ```kotlin
 lifecycleScope.launch {
@@ -482,6 +518,7 @@ lifecycleScope.launch {
     when (val result = MonetizeKit.show(this@GameActivity, AppAds.levelComplete)) {
         AdShowResult.Shown -> continueGame()
         AdShowResult.Suppressed -> continueGameWithoutAd()
+        is AdShowResult.Capped -> continueGameWithoutAd()
         is AdShowResult.Failed -> continueGameWithoutAd(result.error)
     }
 }
@@ -519,7 +556,8 @@ lifecycleScope.launch {
 lifecycleScope.launch {
     MonetizeKit.events.collect { event ->
         // NetworkInitialized, AdLoaded, AdImpression, AdClicked, AdPaid,
-        // AdRewardEarned, AdsAccessChanged, AdPreloaded, AdShown або failure-події.
+        // AdRewardEarned, AdPreloadRetryScheduled, AdShowCapped, AdsAccessChanged,
+        // AdPreloaded, AdShown або failure-події.
     }
 }
 ```
@@ -550,6 +588,7 @@ banner/native slots із зарезервованою висотою. Це ін�
 - Додавайте лише Gradle adapters обраного режиму.
 - Перевірте кожен placement і порядок direct fallback на реальних пристроях.
 - Переконайтеся, що preload генерує одну подію `AdPreloaded`, а `show()` не показує дві fullscreen-реклами підряд.
+- Перевірте `AdShowResult.Capped` та `AdPreloadRetryScheduled` для обраної production policy.
 - Переконайтеся, що у release немає test ID та Unity test mode.
 - Додайте in-app точку входу для privacy options, якщо цього вимагає UMP.
 - Якщо billing керує доступом до реклами, перевіряйте та надавайте покупки на захищеному backend

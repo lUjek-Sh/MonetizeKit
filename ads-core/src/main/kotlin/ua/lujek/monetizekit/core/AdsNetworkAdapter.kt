@@ -93,6 +93,8 @@ sealed interface AdLoadResult {
 sealed interface AdShowResult {
     data object Shown : AdShowResult
     data object Suppressed : AdShowResult
+    /** A configured local frequency cap blocks this placement until [nextAllowedAtEpochMillis]. */
+    data class Capped(val nextAllowedAtEpochMillis: Long) : AdShowResult
     data class Failed(val error: AdsError) : AdShowResult
 }
 

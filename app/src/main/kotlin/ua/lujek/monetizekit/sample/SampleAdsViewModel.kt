@@ -141,8 +141,12 @@ private fun AdsEvent.label(): String = when (this) {
     is AdsEvent.NetworkInitializationFailed -> "$network initialization failed: ${error.message}"
     is AdsEvent.AdPreloaded -> "${placement.id} preloaded by $network"
     is AdsEvent.AdPreloadFailed -> "${placement.id} preload failed: ${error.message}"
+    is AdsEvent.AdPreloadRetryScheduled -> {
+        "${placement.id} retry ${nextAttempt} in ${delayMillis}ms: ${error.message}"
+    }
     is AdsEvent.AdShown -> "${placement.id} shown by $network"
     is AdsEvent.AdShowFailed -> "${placement.id} show failed: ${error.message}"
+    is AdsEvent.AdShowCapped -> "${placement.id} capped until $nextAllowedAtEpochMillis"
     is AdsEvent.AdsAccessChanged -> "Ads access changed to $access"
     is AdsEvent.AdLoaded -> "${placement.id} loaded by $network"
     is AdsEvent.AdLoadFailed -> "${placement.id} load failed: ${error.message}"
@@ -165,5 +169,6 @@ private fun AdLoadResult.label(): String = when (this) {
 private fun AdShowResult.label(): String = when (this) {
     AdShowResult.Shown -> "shown"
     AdShowResult.Suppressed -> "suppressed"
+    is AdShowResult.Capped -> "capped until $nextAllowedAtEpochMillis"
     is AdShowResult.Failed -> "failed (${error.message})"
 }

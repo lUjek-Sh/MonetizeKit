@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -54,8 +55,18 @@ sealed interface AdsEvent {
     data class NetworkInitializationFailed(val network: AdsNetwork, val error: AdsError) : AdsEvent
     data class AdPreloaded(val placement: FullscreenPlacement, val network: AdsNetwork) : AdsEvent
     data class AdPreloadFailed(val placement: FullscreenPlacement, val error: AdsError) : AdsEvent
+    data class AdPreloadRetryScheduled(
+        val placement: FullscreenPlacement,
+        val nextAttempt: Int,
+        val delayMillis: Long,
+        val error: AdsError,
+    ) : AdsEvent
     data class AdShown(val placement: AdPlacement, val network: AdsNetwork) : AdsEvent
     data class AdShowFailed(val placement: AdPlacement, val error: AdsError) : AdsEvent
+    data class AdShowCapped(
+        val placement: FullscreenPlacement,
+        val nextAllowedAtEpochMillis: Long,
+    ) : AdsEvent
     data class AdsAccessChanged(val access: AdsAccess) : AdsEvent
     data class AdLoaded(
         val placement: AdPlacement,
@@ -143,6 +154,7 @@ object MonetizeKit {
                 adapterFactories[network]?.create()
             }.filterValues { it != null }.mapValues { (_, adapter) -> requireNotNull(adapter) }
             val runtime = AdsRuntime(
+                application = application,
                 configuration = configuration,
                 adapters = adapters,
                 consentManager = GdprConsentManager(application, configuration.gdpr),
@@ -239,18 +251,18 @@ object MonetizeKit {
     }
 
     /**
-     * Prepares an interstitial without showing it. Calls for the same placement are serialized,
-     * and direct-mode candidates are tried in their configured priority order.
+     * Prepares an interstitial without showing it. Load attempts for the same placement are
+     * serialized, and direct-mode candidates are tried in their configured priority order.
      */
     suspend fun preload(placement: InterstitialPlacement): AdLoadResult =
-        fullscreenOperations.forPlacement(placement.id) { preloadInternal(placement) }
+        preloadWithRetryInternal(placement)
 
     /**
-     * Prepares a rewarded ad without showing it. Calls for the same placement are serialized,
-     * and direct-mode candidates are tried in their configured priority order.
+     * Prepares a rewarded ad without showing it. Load attempts for the same placement are
+     * serialized, and direct-mode candidates are tried in their configured priority order.
      */
     suspend fun preload(placement: RewardedPlacement): AdLoadResult =
-        fullscreenOperations.forPlacement(placement.id) { preloadInternal(placement) }
+        preloadWithRetryInternal(placement)
 
     /**
      * Creates a traditional Android View container for use by Views or the ads-compose module.
@@ -424,6 +436,22 @@ object MonetizeKit {
             )
         }
 
+        definition.fullscreenPolicy?.frequencyCap?.let { frequencyCap ->
+            val decision = try {
+                frequencyCap.evaluate(
+                    shownAtEpochMillis = runtime.frequencyCapStore.shownAt(placement.id),
+                    nowEpochMillis = System.currentTimeMillis(),
+                )
+            } catch (_: Throwable) {
+                // A local storage failure must never turn an already available ad into a failed show.
+                FrequencyCapDecision.Allowed
+            }
+            if (decision is FrequencyCapDecision.Capped) {
+                mutableEvents.emit(AdsEvent.AdShowCapped(placement, decision.nextAllowedAtEpochMillis))
+                return@withContext AdShowResult.Capped(decision.nextAllowedAtEpochMillis)
+            }
+        }
+
         var lastError = AdsError(message = "No configured network could show '${placement.id}'.")
         definition.candidates.forEach { candidate ->
             val adapter = runtime.adapters[candidate.network] ?: return@forEach
@@ -452,17 +480,27 @@ object MonetizeKit {
                     )
                 ) {
                     AdShowResult.Shown -> {
+                        definition.fullscreenPolicy?.frequencyCap?.let { frequencyCap ->
+                            try {
+                                runtime.frequencyCapStore.recordShow(
+                                    placementId = placement.id,
+                                    frequencyCap = frequencyCap,
+                                    shownAtEpochMillis = System.currentTimeMillis(),
+                                )
+                            } catch (_: Throwable) {
+                                // Showing an ad succeeded; storage only controls future local caps.
+                            }
+                        }
                         mutableEvents.emit(AdsEvent.AdShown(placement, candidate.network))
                         scope.launch {
-                            fullscreenOperations.forPlacement(placement.id) {
-                                preloadInternal(placement)
-                            }
+                            preloadWithRetryInternal(placement)
                         }
                         return@withContext AdShowResult.Shown
                     }
 
                     is AdShowResult.Failed -> lastError = showResult.error
                     AdShowResult.Suppressed -> return@withContext AdShowResult.Suppressed
+                    is AdShowResult.Capped -> return@withContext showResult
                 }
 
                 is AdLoadResult.Failed -> lastError = loadResult.error
@@ -472,23 +510,61 @@ object MonetizeKit {
         failShow(placement, lastError)
     }
 
-    private suspend fun preloadInternal(placement: FullscreenPlacement): AdLoadResult =
+    private suspend fun preloadWithRetryInternal(placement: FullscreenPlacement): AdLoadResult {
+        var attempt = 1
+        while (true) {
+            when (
+                val result = fullscreenOperations.forPlacement(placement.id) {
+                    preloadOnceInternal(placement)
+                }
+            ) {
+                is FullscreenPreloadAttempt.Loaded -> {
+                    mutableEvents.emit(AdsEvent.AdPreloaded(placement, result.network))
+                    return AdLoadResult.Loaded
+                }
+
+                FullscreenPreloadAttempt.Suppressed -> return AdLoadResult.Suppressed
+
+                is FullscreenPreloadAttempt.Failed -> {
+                    if (!result.isRetryable || attempt >= result.retryPolicy.maxAttempts) {
+                        return failPreload(placement, result.error)
+                    }
+                    val delayMillis = result.retryPolicy.delayAfterFailedAttempt(attempt)
+                    mutableEvents.emit(
+                        AdsEvent.AdPreloadRetryScheduled(
+                            placement = placement,
+                            nextAttempt = attempt + 1,
+                            delayMillis = delayMillis,
+                            error = result.error,
+                        ),
+                    )
+                    delay(delayMillis)
+                    attempt += 1
+                }
+            }
+        }
+    }
+
+    private suspend fun preloadOnceInternal(placement: FullscreenPlacement): FullscreenPreloadAttempt =
         withContext(Dispatchers.Main.immediate) {
-            if (!isAdsAllowed()) return@withContext AdLoadResult.Suppressed
+            if (!isAdsAllowed()) return@withContext FullscreenPreloadAttempt.Suppressed
             val runtime = currentRuntime()
-                ?: return@withContext failPreload(
-                    placement,
-                    AdsError(message = "MonetizeKit is not initialized."),
+                ?: return@withContext FullscreenPreloadAttempt.Failed(
+                    error = AdsError(message = "MonetizeKit is not initialized."),
+                    isRetryable = false,
+                    retryPolicy = FullscreenRetryPolicy(),
                 )
             val definition = runtime.configuration.placements[placement.id]
-                ?: return@withContext failPreload(
-                    placement,
-                    AdsError(message = "Fullscreen placement '${placement.id}' is not configured."),
+                ?: return@withContext FullscreenPreloadAttempt.Failed(
+                    error = AdsError(message = "Fullscreen placement '${placement.id}' is not configured."),
+                    isRetryable = false,
+                    retryPolicy = FullscreenRetryPolicy(),
                 )
             if (definition.placement.format != placement.format) {
-                return@withContext failPreload(
-                    placement,
-                    AdsError(message = "Placement '${placement.id}' has a different ad format."),
+                return@withContext FullscreenPreloadAttempt.Failed(
+                    error = AdsError(message = "Placement '${placement.id}' has a different ad format."),
+                    isRetryable = false,
+                    retryPolicy = FullscreenRetryPolicy(),
                 )
             }
 
@@ -502,11 +578,14 @@ object MonetizeKit {
                 )
             ) {
                 is FullscreenPreloadResult.Loaded -> {
-                    mutableEvents.emit(AdsEvent.AdPreloaded(placement, result.network))
-                    AdLoadResult.Loaded
+                    FullscreenPreloadAttempt.Loaded(result.network)
                 }
 
-                is FullscreenPreloadResult.Failed -> failPreload(placement, result.error)
+                is FullscreenPreloadResult.Failed -> FullscreenPreloadAttempt.Failed(
+                    error = result.error,
+                    isRetryable = result.isRetryable,
+                    retryPolicy = requireNotNull(definition.fullscreenPolicy).retryPolicy,
+                )
             }
         }
 
@@ -566,9 +645,21 @@ object MonetizeKit {
 }
 
 private class AdsRuntime(
+    application: Application,
     val configuration: AdsConfiguration,
     val adapters: Map<AdsNetwork, AdsNetworkAdapter>,
     val consentManager: GdprConsentManager,
 ) {
     val readyNetworks = ConcurrentHashMap.newKeySet<AdsNetwork>()
+    val frequencyCapStore = FullscreenFrequencyCapStore(application)
+}
+
+private sealed interface FullscreenPreloadAttempt {
+    data class Loaded(val network: AdsNetwork) : FullscreenPreloadAttempt
+    data object Suppressed : FullscreenPreloadAttempt
+    data class Failed(
+        val error: AdsError,
+        val isRetryable: Boolean,
+        val retryPolicy: FullscreenRetryPolicy,
+    ) : FullscreenPreloadAttempt
 }

@@ -26,5 +26,6 @@ dependencies {
     implementation(libs.koin.core)
     implementation(libs.google.ump)
     implementation(libs.androidx.lifecycle.runtime)
+    implementation(libs.androidx.datastore.preferences)
     testImplementation(libs.junit)
 }

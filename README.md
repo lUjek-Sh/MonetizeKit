@@ -456,13 +456,49 @@ creative the placement may render.
 ## Show fullscreen ads
 
 The API is suspending. Preload a fullscreen placement when the SDK becomes `Ready`; this loads only
-the first eligible candidate in the configured priority order and does not show anything. Calls for
-the same placement are serialized. A successful `show()` consumes that creative and automatically
+the first eligible candidate in the configured priority order and does not show anything. Network
+load attempts for the same placement are serialized. A successful `show()` consumes that creative and automatically
 starts preparing its replacement after dismissal.
 
 Manual direct caches have a one-hour maximum lifetime. MonetizeKit drops an expired creative before
 the next `preload()` or `show()` and obtains a fresh one; this follows the Google Mobile Ads caching
 guidance for interstitial and rewarded inventory.
+
+### Frequency caps and preload retry
+
+Configure this per fullscreen placement when the app must not show ads too often. A cap is checked
+immediately before `show()` and is recorded only after an ad was actually shown. Its small
+placement-owned timestamp history is kept in DataStore across process restarts; it contains no ad,
+device, or user identifiers.
+
+```kotlin
+interstitial(
+    placement = AppAds.levelComplete,
+    policy = FullscreenPlacementPolicy(
+        frequencyCap = FullscreenFrequencyCap(
+            cooldownMillis = 90_000L,
+            maxImpressions = 3,
+            windowMillis = 10 * 60_000L,
+        ),
+        retryPolicy = FullscreenRetryPolicy(
+            maxAttempts = 3,          // includes the first preload request
+            initialDelayMillis = 2_000L,
+            maxDelayMillis = 15_000L,
+        ),
+    ),
+) {
+    unity("UNITY_LEVEL_COMPLETE_PLACEMENT")
+    meta("META_LEVEL_COMPLETE_PLACEMENT")
+    admob("ca-app-pub-xxxxxxxxxxxxxxxx/333")
+}
+```
+
+`FullscreenFrequencyCap` may use a cooldown, a rolling `maxImpressions`/`windowMillis` rule, or
+both. When capped, `show()` returns `AdShowResult.Capped(nextAllowedAtEpochMillis)` without making
+an ad request. `FullscreenRetryPolicy` applies only to explicit `preload()` and to the automatic
+replacement preload after a successful show; an explicit `show()` never waits for retry delays.
+Only retryable network-load failures are retried, with exponential backoff. The default policy has
+one attempt and therefore preserves the previous no-retry behavior.
 
 ```kotlin
 lifecycleScope.launch {
@@ -482,6 +518,7 @@ lifecycleScope.launch {
     when (val result = MonetizeKit.show(this@GameActivity, AppAds.levelComplete)) {
         AdShowResult.Shown -> continueGame()
         AdShowResult.Suppressed -> continueGameWithoutAd()
+        is AdShowResult.Capped -> continueGameWithoutAd()
         is AdShowResult.Failed -> continueGameWithoutAd(result.error)
     }
 }
@@ -518,7 +555,8 @@ lifecycleScope.launch {
 lifecycleScope.launch {
     MonetizeKit.events.collect { event ->
         // NetworkInitialized, AdLoaded, AdImpression, AdClicked, AdPaid,
-        // AdRewardEarned, AdsAccessChanged, AdPreloaded, AdShown, or failure events.
+        // AdRewardEarned, AdPreloadRetryScheduled, AdShowCapped, AdsAccessChanged,
+        // AdPreloaded, AdShown, or failure events.
     }
 }
 ```
@@ -548,6 +586,7 @@ the height-reserved Compose banner/native slots. It is a verification tool, not 
 - Add only the Gradle adapters that belong to the selected mode.
 - Test every configured placement and direct fallback order on real devices.
 - Check that preloading produces one `AdPreloaded` event and that `show()` never presents more than one fullscreen ad.
+- Verify `AdShowResult.Capped` and `AdPreloadRetryScheduled` with the chosen production policy.
 - Confirm no debug test IDs or Unity test mode are included in the release variant.
 - Provide an in-app privacy-options entry point when UMP requires it.
 - If billing controls ad access, verify and grant purchases on a secure backend before returning `Verified`.

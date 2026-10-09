@@ -11,7 +11,11 @@ internal sealed interface FullscreenPreloadResult {
         val adUnitId: String,
     ) : FullscreenPreloadResult
 
-    data class Failed(val error: AdsError) : FullscreenPreloadResult
+    data class Failed(
+        val error: AdsError,
+        /** True only when a network request failed and a retry could meaningfully recover. */
+        val isRetryable: Boolean,
+    ) : FullscreenPreloadResult
 }
 
 /**
@@ -28,6 +32,7 @@ internal suspend fun preloadFirstFullscreenCandidate(
     eventReporter: AdsEventReporter,
 ): FullscreenPreloadResult {
     var lastError = AdsError(message = "No configured network could load '${placement.id}'.")
+    var lastErrorIsRetryable = false
 
     candidates.forEach { candidate ->
         if (candidate.network !in readyNetworks) return@forEach
@@ -37,6 +42,7 @@ internal suspend fun preloadFirstFullscreenCandidate(
                 network = candidate.network,
                 message = "${candidate.network} does not support ${placement.format}.",
             )
+            lastErrorIsRetryable = false
             return@forEach
         }
 
@@ -61,14 +67,18 @@ internal suspend fun preloadFirstFullscreenCandidate(
                 )
             }
 
-            is AdLoadResult.Failed -> lastError = loadResult.error
+            is AdLoadResult.Failed -> {
+                lastError = loadResult.error
+                lastErrorIsRetryable = true
+            }
             AdLoadResult.Suppressed -> {
                 return FullscreenPreloadResult.Failed(
                     AdsError(message = "Fullscreen loading was suppressed by the ad access policy."),
+                    isRetryable = false,
                 )
             }
         }
     }
 
-    return FullscreenPreloadResult.Failed(lastError)
+    return FullscreenPreloadResult.Failed(lastError, isRetryable = lastErrorIsRetryable)
 }
