@@ -27,6 +27,7 @@ internal enum class AdRequestRoute {
 data class AdMobConfiguration internal constructor(
     val applicationId: String,
     val testDeviceIds: Set<String>,
+    val metaMediationTestDeviceHashes: Set<String>,
 )
 
 @ConsistentCopyVisibility
@@ -95,6 +96,7 @@ class AdsConfiguration internal constructor(
     val meta: MetaConfiguration?,
     val unity: UnityConfiguration?,
     val gdpr: GdprConfiguration,
+    val bannerAppearance: BannerAppearance,
     val nativeAdAppearance: NativeAdAppearance,
     val adsAccessProvider: AdsAccessProvider,
     internal val placements: Map<PlacementId, PlacementDefinition>,
@@ -122,9 +124,11 @@ class AdsConfigurationBuilder {
         usStatePrivacyMode = UsStatePrivacyMode.NONE,
         externalConsentProvider = null,
     )
+    private var bannerAppearance: BannerAppearance = BannerAppearance()
     private var nativeAdAppearance: NativeAdAppearance = NativeAdAppearance()
     private var adsAccessProvider: AdsAccessProvider = AdsAccessProviders.alwaysAllowed
     private var isGdprConfigured = false
+    private var isBannerAppearanceConfigured = false
     private var isNativeAdAppearanceConfigured = false
     private var isAdsAccessConfigured = false
     private val placementDefinitions = linkedMapOf<PlacementId, PlacementDefinition>()
@@ -165,6 +169,16 @@ class AdsConfigurationBuilder {
      * signals; it does not create a second consent dialog.
      */
     fun privacy(block: GdprConfigurationBuilder.() -> Unit) = gdpr(block)
+
+    /**
+     * Sets the outer frame around network-owned banner creatives. The creative itself remains
+     * untouched, so this is safe for direct inventory and AdMob Mediation.
+     */
+    fun bannerAppearance(appearance: BannerAppearance) {
+        check(!isBannerAppearanceConfigured) { "Banner appearance is configured more than once." }
+        isBannerAppearanceConfigured = true
+        bannerAppearance = appearance
+    }
 
     /**
      * Sets the appearance used only by MonetizeKit's built-in native card renderer. Pass a
@@ -257,6 +271,7 @@ class AdsConfigurationBuilder {
             meta = metaConfiguration,
             unity = unityConfiguration,
             gdpr = gdprConfiguration,
+            bannerAppearance = bannerAppearance,
             nativeAdAppearance = nativeAdAppearance,
             adsAccessProvider = adsAccessProvider,
             placements = placementDefinitions.toMap(),
@@ -352,6 +367,8 @@ internal data class DirectNetworks(
 class AdMobConfigurationBuilder {
     var applicationId: String? = null
     private val mutableTestDeviceIds = linkedSetOf<String>()
+    private val mutableMetaMediationTestDeviceHashes = linkedSetOf<String>()
+    private var isMediationTestingConfigured = false
 
     /** Safely enables Google Mobile Ads test devices only for a debug build. */
     fun testing(
@@ -362,11 +379,28 @@ class AdMobConfigurationBuilder {
         mutableTestDeviceIds += AdMobTestingBuilder().apply(block).build()
     }
 
+    /**
+     * Configures test-only flags required by individual AdMob mediation partner SDKs.
+     * This does not enable direct network requests: every placement remains an AdMob ad unit.
+     */
+    fun mediationTesting(
+        enabled: Boolean,
+        block: AdMobMediationTestingBuilder.() -> Unit,
+    ) {
+        check(!isMediationTestingConfigured) { "AdMob mediation testing is configured more than once." }
+        isMediationTestingConfigured = true
+        if (!enabled) return
+        mutableMetaMediationTestDeviceHashes += AdMobMediationTestingBuilder()
+            .apply(block)
+            .metaTestDeviceHashes
+    }
+
     internal fun build(): AdMobConfiguration = AdMobConfiguration(
         applicationId = requireNotNull(applicationId) {
             "AdMob application id must be provided."
         }.requireValue("AdMob application id"),
         testDeviceIds = mutableTestDeviceIds.toSet(),
+        metaMediationTestDeviceHashes = mutableMetaMediationTestDeviceHashes.toSet(),
     )
 }
 
@@ -379,6 +413,35 @@ class AdMobTestingBuilder {
     }
 
     internal fun build(): Set<String> = mutableDeviceIds.toSet()
+}
+
+/** Test-only configuration for SDKs loaded by AdMob mediation adapters. */
+@MonetizeKitDsl
+class AdMobMediationTestingBuilder {
+    private var isMetaConfigured = false
+    internal val metaTestDeviceHashes = linkedSetOf<String>()
+
+    /**
+     * Registers Meta's hashed test-device ID with the Meta SDK before Google Mobile Ads starts.
+     * Include `:ads-admob-meta-mediation`; this does not make Meta a direct ad source.
+     */
+    fun meta(block: MetaMediationTestingBuilder.() -> Unit) {
+        check(!isMetaConfigured) { "Meta mediation testing is configured more than once." }
+        isMetaConfigured = true
+        metaTestDeviceHashes += MetaMediationTestingBuilder().apply(block).build()
+    }
+}
+
+@MonetizeKitDsl
+class MetaMediationTestingBuilder {
+    private val mutableDeviceHashes = linkedSetOf<String>()
+
+    /** Meta's hash from the Meta test-device flow; it is not an AdMob test-device ID. */
+    fun testDevice(vararg deviceHashes: String) {
+        mutableDeviceHashes += deviceHashes.map { it.requireValue("Meta mediation test device hash") }
+    }
+
+    internal fun build(): Set<String> = mutableDeviceHashes.toSet()
 }
 
 @MonetizeKitDsl

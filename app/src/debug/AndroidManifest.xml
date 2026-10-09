@@ -4,7 +4,7 @@
         <!-- Google's official sample application ID. It is deliberately debug-source-set only. -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713" />
+            android:value="@string/monetizekit_sample_admob_application_id" />
         <receiver
             android:name=".DebugPrivacyProfileRestartReceiver"
             android:exported="false" />

@@ -5,6 +5,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import ua.lujek.monetizekit.core.MonetizeKit
@@ -33,7 +34,10 @@ fun AdsNative(
 
     key(placement.id.value, kitState) {
         AndroidView(
-            modifier = modifier,
+            // AndroidView intentionally does not clip its child by default. Native media may be
+            // backed by a SurfaceView, so enforce the placement boundary before the next Compose
+            // item (such as another ad slot) is drawn.
+            modifier = modifier.clipToBounds(),
             factory = { MonetizeKit.createNativeSlot(context, placement).also { it.load() } },
             update = { it.load() },
             onRelease = { it.release() },

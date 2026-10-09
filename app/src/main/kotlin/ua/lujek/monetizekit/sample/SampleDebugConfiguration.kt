@@ -41,13 +41,42 @@ internal object SampleDebugConfiguration {
         rewarded = DebugUnityIds.REWARDED.nullIfBlank(),
     ).takeIf(UnityDebugPlacementIds::isConfigured)
 
-    val umpTestDeviceHash: String? = DebugUmpIds.TEST_DEVICE_HASH.nullIfBlank()
-
     val networkSummary: String = buildList {
         add("AdMob demo")
         if (meta != null) add("Meta direct") else add("Meta not configured")
         if (unity != null) add("Unity direct") else add("Unity not configured")
     }.joinToString()
+}
+
+/** Debug-only storage for the UMP hash shown by Logcat after `requestConsentInfoUpdate()`. */
+internal object SamplePrivacyTestSettingsStore {
+    private const val preferencesName = "monetizekit_sample_debug"
+    private const val umpTestDeviceHashKey = "ump_test_device_hash"
+
+    @Volatile
+    private var currentUmpTestDeviceHash: String? = DebugUmpIds.TEST_DEVICE_HASH.nullIfBlank()
+
+    fun readUmpTestDeviceHash(context: Context): String? = context
+        .getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+        .getString(umpTestDeviceHashKey, null)
+        ?.nullIfBlank()
+        ?.also { currentUmpTestDeviceHash = it }
+        ?: currentUmpTestDeviceHash
+
+    fun currentUmpTestDeviceHash(): String? = currentUmpTestDeviceHash
+
+    fun saveUmpTestDeviceHash(context: Context, value: String): String? {
+        val normalizedValue = value.nullIfBlank()
+        currentUmpTestDeviceHash = normalizedValue
+        context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+            .edit()
+            .apply {
+                if (normalizedValue == null) remove(umpTestDeviceHashKey)
+                else putString(umpTestDeviceHashKey, normalizedValue)
+            }
+            .apply()
+        return normalizedValue
+    }
 }
 
 enum class SamplePrivacyProfile(

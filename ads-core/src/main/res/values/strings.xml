@@ -1,3 +1,4 @@
 <resources>
     <string name="monetizekit_native_ad_attribution">Ad</string>
+    <string name="monetizekit_banner_ad_attribution">Ad</string>
 </resources>

@@ -39,6 +39,7 @@ class AdsInlineSlotsInstrumentedTest {
                 slot = AdsBannerSlot(
                     context = activity,
                     reservedHeightDp = placement.reservedHeightDp,
+                    appearance = BannerAppearance(),
                     environment = environment(kitState, access),
                 ).apply {
                     setCandidateProvider {
@@ -102,6 +103,10 @@ class AdsInlineSlotsInstrumentedTest {
             awaitLoaded(slot.state)
 
             scenario.onActivity {
+                slot.measure(atMost(1_000), atMost(1_000))
+                assertEquals(reservedHeight(slot.context, placement.reservedHeightDp), slot.measuredHeight)
+                assertEquals(reservedHeight(slot.context, placement.reservedHeightDp), slot.getChildAt(0).measuredHeight)
+
                 lifecycleOwner.moveTo(Lifecycle.Event.ON_PAUSE)
                 assertEquals(1, controller.pauseCalls.get())
 

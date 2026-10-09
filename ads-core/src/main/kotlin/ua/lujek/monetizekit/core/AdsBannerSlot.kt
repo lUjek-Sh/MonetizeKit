@@ -3,6 +3,7 @@ package ua.lujek.monetizekit.core
 import android.content.Context
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
@@ -52,11 +53,24 @@ private fun monetizeKitInlineEnvironment(): InlineSlotEnvironment = InlineSlotEn
 class AdsBannerSlot internal constructor(
     context: Context,
     private val reservedHeightDp: Int,
+    private val appearance: BannerAppearance,
     private val environment: InlineSlotEnvironment,
 ) : FrameLayout(context) {
     constructor(context: Context, reservedHeightDp: Int) : this(
         context = context,
         reservedHeightDp = reservedHeightDp,
+        appearance = BannerAppearance(),
+        environment = monetizeKitInlineEnvironment(),
+    )
+
+    internal constructor(
+        context: Context,
+        reservedHeightDp: Int,
+        appearance: BannerAppearance,
+    ) : this(
+        context = context,
+        reservedHeightDp = reservedHeightDp,
+        appearance = appearance,
         environment = monetizeKitInlineEnvironment(),
     )
 
@@ -211,7 +225,10 @@ class AdsBannerSlot internal constructor(
         observationJob?.cancel()
         activeController = controller
         removeAllViews()
-        addView(controller.view, LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        addView(
+            BannerFrame(context, appearance).apply { attach(controller.view) },
+            LayoutParams(MATCH_PARENT, MATCH_PARENT),
+        )
         mutableState.value = AdViewState.Loading
         controller.load()
         observationJob = scope.launch {
@@ -234,8 +251,14 @@ class AdsBannerSlot internal constructor(
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
         val height = if (adsAllowed) View.resolveSize(reservedHeightPx, heightMeasureSpec) else 0
+        // A vertically scrolling Compose parent measures AndroidView with an unspecified height.
+        // Measure the SDK-owned child against the placement reservation so it fills that contract
+        // instead of choosing an intrinsic height and leaving a blank tail in the slot.
+        super.onMeasure(
+            widthMeasureSpec,
+            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
+        )
         setMeasuredDimension(measuredWidth, height)
     }
 
@@ -301,6 +324,12 @@ class AdsNativeSlot internal constructor(
     val state: StateFlow<AdViewState> = mutableState
 
     init {
+        // AndroidView itself does not clip View content to its Compose bounds. Native MediaView
+        // can use a SurfaceView, so keep the entire network-owned hierarchy inside this slot.
+        clipChildren = true
+        clipToPadding = true
+        outlineProvider = ViewOutlineProvider.BOUNDS
+        clipToOutline = true
         scope.launch {
             environment.adsAccess.collect { access ->
                 val nowAllowed = access == AdsAccess.Allowed
@@ -444,8 +473,14 @@ class AdsNativeSlot internal constructor(
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
         val height = if (adsAllowed) View.resolveSize(reservedHeightPx, heightMeasureSpec) else 0
+        // NativeAdView otherwise receives the unbounded height from a scrolling Compose parent
+        // and can lay out its media shorter than the reservation. The host and creative must use
+        // one exact placement boundary.
+        super.onMeasure(
+            widthMeasureSpec,
+            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
+        )
         setMeasuredDimension(measuredWidth, height)
     }
 

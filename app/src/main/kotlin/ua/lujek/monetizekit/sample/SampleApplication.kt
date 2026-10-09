@@ -3,9 +3,13 @@ package ua.lujek.monetizekit.sample
 import android.app.Application
 import ua.lujek.monetizekit.core.AppOpenPlacementPolicy
 import ua.lujek.monetizekit.core.AdsPlacements
+import ua.lujek.monetizekit.core.BannerAppearance
 import ua.lujek.monetizekit.core.GdprDebugGeography
 import ua.lujek.monetizekit.core.MonetizeKit
+import ua.lujek.monetizekit.core.NativeAdAppearance
 import ua.lujek.monetizekit.core.UsStatePrivacyMode
+
+private val DebugSampleNativeAppearance = NativeAdAppearance()
 
 class SampleApplication : Application() {
     override fun onCreate() {
@@ -14,13 +18,16 @@ class SampleApplication : Application() {
         if (!BuildConfig.DEBUG) return
 
         val privacyProfile = SamplePrivacyProfileStore.read(this)
+        val umpTestDeviceHash = SamplePrivacyTestSettingsStore.readUmpTestDeviceHash(this)
         val meta = SampleDebugConfiguration.meta
         val unity = SampleDebugConfiguration.unity
         MonetizeKit.initialize(this) {
             privacy {
                 when (privacyProfile) {
                     SamplePrivacyProfile.UMP_DEFAULT -> Unit
-                    SamplePrivacyProfile.UMP_EEA -> configureUmpTestGeography(GdprDebugGeography.EEA)
+                    SamplePrivacyProfile.UMP_EEA -> {
+                        configureUmpTestGeography(GdprDebugGeography.EEA, umpTestDeviceHash)
+                    }
                     SamplePrivacyProfile.COPPA -> ageRestrictedTreatment(childDirected = true)
                     SamplePrivacyProfile.TFUA -> ageRestrictedTreatment(underAgeOfConsent = true)
                     SamplePrivacyProfile.US_RESTRICTED_DATA_PROCESSING -> {
@@ -28,16 +35,28 @@ class SampleApplication : Application() {
                     }
                     SamplePrivacyProfile.US_GLOBAL_PRIVACY_PLATFORM -> {
                         usStatePrivacy(UsStatePrivacyMode.GLOBAL_PRIVACY_PLATFORM)
-                        configureUmpTestGeography(GdprDebugGeography.REGULATED_US_STATE)
+                        configureUmpTestGeography(
+                            geography = GdprDebugGeography.REGULATED_US_STATE,
+                            testDeviceHash = umpTestDeviceHash,
+                        )
                     }
                     SamplePrivacyProfile.EXTERNAL_CMP -> {
                         externalConsent(SampleExternalCmpConsentProvider(this@SampleApplication))
                     }
                 }
             }
+            bannerAppearance(
+                BannerAppearance(
+                    contentPaddingDp = 6,
+                    cornerRadiusDp = 16,
+                ),
+            )
+            nativeAppearance(DebugSampleNativeAppearance)
             direct {
                 admob {
-                    applicationId = DebugAdMobIds.APPLICATION_ID
+                    applicationId = this@SampleApplication.getString(
+                        R.string.monetizekit_sample_admob_application_id,
+                    )
                 }
                 meta?.let { metaConfiguration ->
                     meta {
@@ -116,32 +135,38 @@ class SampleApplication : Application() {
 
     private fun ua.lujek.monetizekit.core.GdprConfigurationBuilder.configureUmpTestGeography(
         geography: GdprDebugGeography,
+        testDeviceHash: String?,
     ) {
         debug(enabled = BuildConfig.DEBUG) {
             this.geography = geography
-            SampleDebugConfiguration.umpTestDeviceHash?.let(::testDeviceHashedId)
+            testDeviceHash?.let(::testDeviceHashedId)
         }
     }
 }
 
 object DebugSamplePlacements {
-    val adMobBanner = AdsPlacements.banner(id = "debug_admob_banner", reservedHeightDp = 50)
-    val adMobNative = AdsPlacements.native(id = "debug_admob_native", reservedHeightDp = 280)
+    val adMobBanner = AdsPlacements.banner(id = "debug_admob_banner", reservedHeightDp = 96)
+    val adMobNative = AdsPlacements.native(
+        id = "debug_admob_native",
+        reservedHeightDp = DebugSampleNativeAppearance.minimumReservedHeightDp,
+    )
     val adMobInterstitial = AdsPlacements.interstitial(id = "debug_admob_interstitial")
     val adMobRewarded = AdsPlacements.rewarded(id = "debug_admob_rewarded")
     val adMobRewardedInterstitial = AdsPlacements.rewardedInterstitial(id = "debug_admob_rewarded_interstitial")
     val adMobAppOpen = AdsPlacements.appOpen(id = "debug_admob_app_open")
-    val metaBanner = AdsPlacements.banner(id = "debug_meta_banner", reservedHeightDp = 50)
-    val metaNative = AdsPlacements.native(id = "debug_meta_native", reservedHeightDp = 280)
+    val metaBanner = AdsPlacements.banner(id = "debug_meta_banner", reservedHeightDp = 96)
+    val metaNative = AdsPlacements.native(
+        id = "debug_meta_native",
+        reservedHeightDp = DebugSampleNativeAppearance.minimumReservedHeightDp,
+    )
     val metaInterstitial = AdsPlacements.interstitial(id = "debug_meta_interstitial")
     val metaRewarded = AdsPlacements.rewarded(id = "debug_meta_rewarded")
-    val unityBanner = AdsPlacements.banner(id = "debug_unity_banner", reservedHeightDp = 50)
+    val unityBanner = AdsPlacements.banner(id = "debug_unity_banner", reservedHeightDp = 96)
     val unityInterstitial = AdsPlacements.interstitial(id = "debug_unity_interstitial")
     val unityRewarded = AdsPlacements.rewarded(id = "debug_unity_rewarded")
 }
 
 private object DebugAdMobIds {
-    const val APPLICATION_ID = "ca-app-pub-3940256099942544~3347511713"
     const val BANNER = "ca-app-pub-3940256099942544/6300978111"
     const val NATIVE = "ca-app-pub-3940256099942544/2247696110"
     const val INTERSTITIAL = "ca-app-pub-3940256099942544/1033173712"
@@ -150,7 +175,12 @@ private object DebugAdMobIds {
     const val APP_OPEN = "ca-app-pub-3940256099942544/9257395921"
 }
 
-/** Fill only the Meta IDs you need; empty values keep their direct-network controls disabled. */
+/**
+ * Fill only the direct Meta IDs you need; empty values keep their controls disabled.
+ *
+ * [TEST_DEVICE_HASH] is the hashed device ID from Meta's test-device flow (or its Logcat hint),
+ * not the Android advertising ID and not an AdMob test-device ID.
+ */
 object DebugMetaIds {
     const val BANNER = ""
     const val NATIVE = ""
@@ -167,7 +197,7 @@ object DebugUnityIds {
     const val REWARDED = ""
 }
 
-/** UMP logs this hashed test-device ID after the first consent-info request. */
+/** Fallback UMP hash. The debug sample can also persist it from its Privacy controls. */
 object DebugUmpIds {
     const val TEST_DEVICE_HASH = ""
 }

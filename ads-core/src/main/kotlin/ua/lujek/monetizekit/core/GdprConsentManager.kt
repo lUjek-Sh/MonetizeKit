@@ -34,12 +34,18 @@ internal class GdprConsentManager(
     configuration: GdprConfiguration,
     umpProvider: PrivacyConsentProvider = UmpPrivacyConsentProvider(context, configuration),
 ) {
+    private val umpConsentProvider = umpProvider as? UmpPrivacyConsentProvider
     private val consentProvider = selectPrivacyConsentProvider(configuration, umpProvider)
 
     suspend fun gather(activity: Activity): ConsentSnapshot = consentProvider.gatherConsent(activity)
 
     suspend fun showPrivacyOptions(activity: Activity): ConsentSnapshot =
         consentProvider.showPrivacyOptions(activity)
+
+    /** Clears only UMP's persisted test state; an application restart must follow before loading ads. */
+    fun resetUmpConsentForTesting() {
+        umpConsentProvider?.resetForTesting()
+    }
 }
 
 private class UmpPrivacyConsentProvider(
@@ -78,6 +84,10 @@ private class UmpPrivacyConsentProvider(
             }
         }
         return consentSnapshot(formError)
+    }
+
+    fun resetForTesting() {
+        consentInformation.reset()
     }
 
     private fun consentSnapshot(formError: FormError?): ConsentSnapshot = ConsentSnapshot(

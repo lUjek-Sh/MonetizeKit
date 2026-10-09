@@ -23,6 +23,7 @@ data class SampleAdsUiState(
     val sdkStatus: String,
     val privacyStatus: String,
     val privacyProfile: SamplePrivacyProfile,
+    val umpTestDeviceHash: String,
     val networkTestSetup: String,
     val lastAction: String,
     val lastEvent: String,
@@ -43,8 +44,9 @@ sealed interface SampleAdsAction {
     data object ShowUnityRewarded : SampleAdsAction
     data object GatherConsent : SampleAdsAction
     data object OpenPrivacyOptions : SampleAdsAction
+    data class UpdateUmpTestDeviceHash(val value: String) : SampleAdsAction
     data class SelectPrivacyProfile(val profile: SamplePrivacyProfile) : SampleAdsAction
-    data object RestartWithPrivacyProfile : SampleAdsAction
+    data object ResetUmpAndRestartWithPrivacyProfile : SampleAdsAction
 }
 
 class SampleAdsViewModel : ViewModel() {
@@ -55,6 +57,7 @@ class SampleAdsViewModel : ViewModel() {
             sdkStatus = if (BuildConfig.DEBUG) "Waiting for UMP consent" else "Ads are disabled in release",
             privacyStatus = "Consent has not been requested",
             privacyProfile = SamplePrivacyProfileStore.current(),
+            umpTestDeviceHash = SamplePrivacyTestSettingsStore.currentUmpTestDeviceHash().orEmpty(),
             networkTestSetup = SampleDebugConfiguration.networkSummary,
             lastAction = "No fullscreen request yet",
             lastEvent = "No SDK event yet",
@@ -117,8 +120,9 @@ class SampleAdsViewModel : ViewModel() {
                 SampleAdsAction.ShowUnityRewarded -> showUnityRewarded(activity)
                 SampleAdsAction.GatherConsent -> gatherConsent(activity)
                 SampleAdsAction.OpenPrivacyOptions -> showPrivacyOptions(activity)
+                is SampleAdsAction.UpdateUmpTestDeviceHash -> updateUmpTestDeviceHash(activity, action.value)
                 is SampleAdsAction.SelectPrivacyProfile -> selectPrivacyProfile(activity, action.profile)
-                SampleAdsAction.RestartWithPrivacyProfile -> DebugPrivacyProfileRestart.restart(activity)
+                SampleAdsAction.ResetUmpAndRestartWithPrivacyProfile -> resetUmpAndRestart(activity)
             }
         }
     }
@@ -285,6 +289,28 @@ class SampleAdsViewModel : ViewModel() {
         }
     }
 
+    private fun updateUmpTestDeviceHash(activity: Activity, value: String) {
+        val savedHash = SamplePrivacyTestSettingsStore.saveUmpTestDeviceHash(
+            context = activity.applicationContext,
+            value = value,
+        )
+        mutableUiState.update {
+            it.copy(
+                umpTestDeviceHash = savedHash.orEmpty(),
+                lastAction = if (savedHash == null) {
+                    "Cleared UMP test-device hash"
+                } else {
+                    "UMP test-device hash saved. Reset and restart to apply the selected profile."
+                },
+            )
+        }
+    }
+
+    private fun resetUmpAndRestart(activity: Activity) {
+        MonetizeKit.resetUmpConsentForTesting()
+        DebugPrivacyProfileRestart.restart(activity)
+    }
+
     private fun notConfigured(networkFormat: String) {
         mutableUiState.update {
             it.copy(lastAction = "$networkFormat is not configured in local.properties")
@@ -308,8 +334,9 @@ private fun SampleAdsAction.requiresReadySdk(): Boolean = when (this) {
 
     SampleAdsAction.GatherConsent,
     SampleAdsAction.OpenPrivacyOptions,
+    is SampleAdsAction.UpdateUmpTestDeviceHash,
     is SampleAdsAction.SelectPrivacyProfile,
-    SampleAdsAction.RestartWithPrivacyProfile,
+    SampleAdsAction.ResetUmpAndRestartWithPrivacyProfile,
     -> false
 }
 

@@ -99,6 +99,7 @@ sealed interface AdsEvent {
 object MonetizeKit {
     private val lock = Any()
     private val adapterFactories = ConcurrentHashMap<AdsNetwork, AdsNetworkAdapterFactory>()
+    private val mediationPartnerConfigurators = ConcurrentHashMap<AdsNetwork, AdMobMediationPartnerConfigurator>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableState = MutableStateFlow<MonetizeKitState>(MonetizeKitState.Uninitialized)
     private val mutableEvents = MutableSharedFlow<AdsEvent>(extraBufferCapacity = 32)
@@ -134,6 +135,19 @@ object MonetizeKit {
             val adapter = factory.create()
             check(adapterFactories.putIfAbsent(adapter.network, factory) == null) {
                 "An adapter for ${adapter.network} is already registered."
+            }
+        }
+    }
+
+    /** Called by optional mediation artifacts before [initialize]. */
+    @JvmStatic
+    fun registerAdMobMediationPartnerConfigurator(configurator: AdMobMediationPartnerConfigurator) {
+        synchronized(lock) {
+            check(mutableState.value is MonetizeKitState.Uninitialized) {
+                "AdMob mediation partners must be registered before MonetizeKit.initialize()."
+            }
+            check(mediationPartnerConfigurators.putIfAbsent(configurator.network, configurator) == null) {
+                "An AdMob mediation partner configurator for ${configurator.network} is already registered."
             }
         }
     }
@@ -243,6 +257,17 @@ object MonetizeKit {
         return@withLock snapshot
     }
 
+    /**
+     * Clears UMP's persisted consent state for development only. Call this in a debug-only path
+     * and restart the process before requesting ads again; it does not reconfigure live adapters.
+     */
+    @JvmStatic
+    fun resetUmpConsentForTesting() {
+        val runtime = currentRuntime() ?: return
+        runtime.consentManager.resetUmpConsentForTesting()
+        mutableGdprConsent.value = GdprConsentState.NotRequested
+    }
+
     suspend fun show(
         activity: Activity,
         placement: InterstitialPlacement,
@@ -304,8 +329,12 @@ object MonetizeKit {
         context: Context,
         placement: BannerPlacement,
     ): AdsBannerSlot {
-        val slot = AdsBannerSlot(context, placement.reservedHeightDp)
         val runtime = currentRuntime()
+        val slot = AdsBannerSlot(
+            context = context,
+            reservedHeightDp = placement.reservedHeightDp,
+            appearance = runtime?.configuration?.bannerAppearance ?: BannerAppearance(),
+        )
         if (runtime == null) {
             slot.setError(AdsError(message = "MonetizeKit is not initialized."))
             return slot
@@ -363,6 +392,12 @@ object MonetizeKit {
         configuredNetworks: Set<AdsNetwork>,
     ) {
         val errors = linkedMapOf<AdsNetwork, AdsError>()
+        configureAdMobMediationPartners(runtime.configuration)?.let { error ->
+            errors[AdsNetwork.ADMOB] = error
+            mutableEvents.emit(AdsEvent.NetworkInitializationFailed(AdsNetwork.ADMOB, error))
+            mutableState.value = MonetizeKitState.Failed(errors)
+            return
+        }
         configuredNetworks.forEach { network ->
             val adapter = runtime.adapters[network]
             if (adapter == null) {
@@ -405,6 +440,35 @@ object MonetizeKit {
             mutableState.value = MonetizeKitState.Ready(runtime.readyNetworks.toSet(), errors)
             preloadConfiguredAppOpenPlacements(runtime)
             maybeShowAutomaticAppOpen()
+        }
+    }
+
+    private fun configureAdMobMediationPartners(configuration: AdsConfiguration): AdsError? {
+        if (configuration.deliveryMode != AdsDeliveryMode.ADMOB_MEDIATION) return null
+
+        val requiredPartners = buildSet {
+            if (configuration.adMob?.metaMediationTestDeviceHashes.orEmpty().isNotEmpty()) {
+                add(AdsNetwork.META)
+            }
+        }
+        val missingPartners = requiredPartners - mediationPartnerConfigurators.keys
+        if (missingPartners.isNotEmpty()) {
+            return AdsError(
+                network = AdsNetwork.ADMOB,
+                message = "Mediation test settings for $missingPartners require the matching mediation artifact on the classpath.",
+            )
+        }
+        return runCatching {
+            requiredPartners.forEach { network ->
+                requireNotNull(mediationPartnerConfigurators[network])
+                    .configureBeforeAdMobInitialization(configuration)
+            }
+        }.exceptionOrNull()?.let { throwable ->
+            AdsError(
+                network = AdsNetwork.ADMOB,
+                message = throwable.message ?: "Could not configure an AdMob mediation partner.",
+                cause = throwable,
+            )
         }
     }
 

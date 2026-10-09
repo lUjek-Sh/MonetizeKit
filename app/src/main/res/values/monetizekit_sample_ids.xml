@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Release never initializes the sample SDK. The debug source set overrides this value. -->
+    <string name="monetizekit_sample_admob_application_id" translatable="false">ca-app-pub-3940256099942544~3347511713</string>
+</resources>

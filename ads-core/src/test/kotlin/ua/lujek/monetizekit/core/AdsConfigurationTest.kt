@@ -54,6 +54,29 @@ class AdsConfigurationTest {
         assertEquals(280, feedNative.reservedHeightDp)
     }
 
+    @Test
+    fun `mediation Meta test device stays in the mediation configuration`() {
+        val configuration = monetizeConfiguration {
+            admobMediation {
+                applicationId = "ca-app-pub-123456789~123456789"
+                mediationTesting(enabled = true) {
+                    meta {
+                        testDevice("c277a773-197d-42d0-af7d-c0a4ceedf1f0")
+                    }
+                }
+            }
+            native(feedNative) {
+                admobMediation("ca-app-pub-123456789/987654321")
+            }
+        }
+
+        assertEquals(
+            setOf("c277a773-197d-42d0-af7d-c0a4ceedf1f0"),
+            configuration.adMob?.metaMediationTestDeviceHashes,
+        )
+        assertNull(configuration.meta)
+    }
+
     @Test(expected = IllegalStateException::class)
     fun `direct and mediation cannot be enabled together`() {
         monetizeConfiguration {
@@ -102,6 +125,25 @@ class AdsConfigurationTest {
     }
 
     @Test
+    fun `mediation partner test settings stay empty when disabled`() {
+        val configuration = monetizeConfiguration {
+            admobMediation {
+                applicationId = "ca-app-pub-123456789~123456789"
+                mediationTesting(enabled = false) {
+                    meta {
+                        testDevice("c277a773-197d-42d0-af7d-c0a4ceedf1f0")
+                    }
+                }
+            }
+            banner(homeBanner) {
+                admobMediation("ca-app-pub-123456789/987654321")
+            }
+        }
+
+        assertTrue(configuration.adMob?.metaMediationTestDeviceHashes.orEmpty().isEmpty())
+    }
+
+    @Test
     fun `native appearance is retained by configuration`() {
         val appearance = NativeAdAppearance(
             cardBackgroundColor = 0xFF112233.toInt(),
@@ -120,6 +162,37 @@ class AdsConfigurationTest {
         }
 
         assertSame(appearance, configuration.nativeAdAppearance)
+    }
+
+    @Test
+    fun `default native appearance reserves enough vertical space for every built-in asset`() {
+        assertEquals(448, NativeAdAppearance().minimumReservedHeightDp)
+        assertEquals(
+            468,
+            NativeAdAppearance(mediaHeightDp = 200).minimumReservedHeightDp,
+        )
+    }
+
+    @Test
+    fun `banner appearance is retained by configuration`() {
+        val appearance = BannerAppearance(
+            frameBackgroundColor = 0xFF112233.toInt(),
+            frameStrokeColor = 0xFF445566.toInt(),
+            contentPaddingDp = 6,
+            cornerRadiusDp = 18,
+        )
+
+        val configuration = monetizeConfiguration {
+            bannerAppearance(appearance)
+            direct {
+                meta()
+            }
+            banner(homeBanner) {
+                meta("META_HOME_BANNER")
+            }
+        }
+
+        assertSame(appearance, configuration.bannerAppearance)
     }
 
     @Test

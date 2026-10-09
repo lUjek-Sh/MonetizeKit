@@ -6,13 +6,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.key
@@ -22,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import ua.lujek.monetizekit.compose.AdsBanner
 import ua.lujek.monetizekit.compose.AdsNative
@@ -35,17 +41,23 @@ fun SampleScreen(
     val colors = LocalSampleColors.current
     val typography = LocalSampleTypography.current
     val spacing = LocalSampleSpacing.current
+    val shapes = LocalSampleShapes.current
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.canvas)
             .safeDrawingPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(spacing.screen),
-        verticalArrangement = Arrangement.spacedBy(spacing.section),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(spacing.item)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(spacing.screen),
+            verticalArrangement = Arrangement.spacedBy(spacing.section),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(spacing.item)) {
             BasicText(
                 text = "MonetizeKit debug sample",
                 style = typography.title.copy(color = colors.title),
@@ -67,7 +79,7 @@ fun SampleScreen(
         StatusCard(title = "Last action", value = state.lastAction)
         StatusCard(title = "Last event", value = state.lastEvent)
 
-        if (state.adsEnabled) {
+            if (state.adsEnabled) {
             Column(verticalArrangement = Arrangement.spacedBy(spacing.item)) {
                 BasicText(
                     text = "Inspector and reload",
@@ -156,6 +168,32 @@ fun SampleScreen(
                     text = "Privacy test profile (applies after restart)",
                     style = typography.subtitle.copy(color = colors.title),
                 )
+                BasicText(
+                    text = "To force UMP EEA or US GPP: run Standard UMP once, copy the " +
+                        "addTestDeviceHashedId(...) value from Logcat, paste it here, select a profile, " +
+                        "then reset and restart. Configure a published UMP message for the App ID in " +
+                        "sample_debug_ids.xml.",
+                    style = typography.caption.copy(color = colors.body),
+                )
+                BasicText(
+                    text = "UMP test-device hash",
+                    style = typography.caption.copy(color = colors.body),
+                )
+                BasicTextField(
+                    value = state.umpTestDeviceHash,
+                    onValueChange = { value ->
+                        onAction(SampleAdsAction.UpdateUmpTestDeviceHash(value))
+                    },
+                    singleLine = true,
+                    textStyle = typography.body.copy(color = colors.title),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { testTag = "ump_test_device_hash" }
+                        .clip(shapes.button)
+                        .background(colors.canvas)
+                        .border(width = spacing.border, color = colors.outline, shape = shapes.button)
+                        .padding(horizontal = spacing.card, vertical = spacing.buttonVertical),
+                )
                 SamplePrivacyProfile.entries.forEach { profile ->
                     SampleActionButton(
                         label = if (profile == state.privacyProfile) {
@@ -168,8 +206,8 @@ fun SampleScreen(
                         onAction(SampleAdsAction.SelectPrivacyProfile(profile))
                     }
                 }
-                SampleActionButton("Apply selected profile and restart debug app", true) {
-                    onAction(SampleAdsAction.RestartWithPrivacyProfile)
+                SampleActionButton("Reset UMP, apply profile, and restart debug app", true) {
+                    onAction(SampleAdsAction.ResetUmpAndRestartWithPrivacyProfile)
                 }
             }
 
@@ -187,16 +225,17 @@ fun SampleScreen(
                         InlineAdTestSlots()
                     }
                 }
+            } else {
+                StatusCard(
+                    title = "Release variant",
+                    value = "Ads are intentionally disabled. Install the debug variant to exercise official test ads.",
+                )
             }
-        } else {
-            StatusCard(
-                title = "Release variant",
-                value = "Ads are intentionally disabled. Install the debug variant to exercise official test ads.",
-            )
         }
     }
 
     SampleExternalCmpDialog()
+}
 }
 
 @Composable
@@ -204,19 +243,19 @@ private fun InlineAdTestSlots() {
     val colors = LocalSampleColors.current
     val typography = LocalSampleTypography.current
 
-    BasicText("AdMob banner", style = typography.caption.copy(color = colors.body))
-    AdsBanner(
-        placement = DebugSamplePlacements.adMobBanner,
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics { testTag = "banner_slot" },
-    )
     BasicText("AdMob native", style = typography.caption.copy(color = colors.body))
     AdsNative(
         placement = DebugSamplePlacements.adMobNative,
         modifier = Modifier
             .fillMaxWidth()
             .semantics { testTag = "native_slot" },
+    )
+    BasicText("AdMob banner", style = typography.caption.copy(color = colors.body))
+    AdsBanner(
+        placement = DebugSamplePlacements.adMobBanner,
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { testTag = "banner_slot" },
     )
     SampleDebugConfiguration.meta?.banner?.let {
         BasicText("Meta banner", style = typography.caption.copy(color = colors.body))

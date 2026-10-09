@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Replace only in a local debug build to test your published UMP message. UMP reads this value
+      from AndroidManifest.xml, so an Application Kotlin constant cannot supply it at runtime.
+      The Google demo ID keeps the sample safe for ad-format testing but has no message from your
+      AdMob Privacy & messaging configuration.
+    -->
+    <string name="monetizekit_sample_admob_application_id" translatable="false">ca-app-pub-3940256099942544~3347511713</string>
+</resources>

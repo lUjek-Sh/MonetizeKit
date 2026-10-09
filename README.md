@@ -1,19 +1,120 @@
 # MonetizeKit
 
-**MonetizeKit** is a modern Android advertising library in the package
-`ua.lujek.monetizekit`. It keeps screens independent from ad-network identifiers:
-the application declares stable placements once, then renders a banner/native slot or asks to
-show a fullscreen placement.
+<p align="center">
+  <strong>One Android toolkit for ads, consent, billing, and entitlement-aware ad removal.</strong>
+</p>
 
-It supports two mutually exclusive delivery modes:
+<p align="center">
+  <a href="https://github.com/lUjek-Sh/MonetizeKit/actions/workflows/verify.yml"><img src="https://github.com/lUjek-Sh/MonetizeKit/actions/workflows/verify.yml/badge.svg" alt="Verification workflow"></a>
+  <img src="https://img.shields.io/badge/Android-API%2024%2B-3DDC84?logo=android&logoColor=white" alt="Android API 24 and above">
+  <img src="https://img.shields.io/badge/Kotlin-2.4.21-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin">
+  <img src="https://img.shields.io/badge/Jetpack%20Compose-supported-4285F4" alt="Jetpack Compose supported">
+</p>
 
-1. **Direct** — AdMob, Meta Audience Network, and Unity Ads are loaded by their native SDKs.
-   The host application explicitly selects the fallback priority per placement.
-2. **AdMob Mediation** — the application loads one AdMob ad unit; bidding and waterfall decisions
-   belong to the AdMob console.
+<p align="center">
+  <a href="README.uk.md">Українська версія</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#ai-integration-brief">AI integration brief</a> ·
+  <a href="#install">Install</a>
+</p>
 
-`direct { ... }` and `admobMediation { ... }` cannot be used in one configuration. This prevents
-the same placement from requesting both a direct network and its mediated copy.
+MonetizeKit is a modular Android library in the `ua.lujek.monetizekit` package. It keeps UI code
+free of ad-network identifiers: define stable application placements once, then render an inline
+slot or explicitly show a fullscreen placement.
+
+> [!IMPORTANT]
+> Choose **one** delivery mode for the application. `direct { ... }` and `admobMediation { ... }`
+> are mutually exclusive. This prevents an ad source from being requested directly and through
+> AdMob Mediation for the same placement.
+
+## At a glance
+
+| Need | Choose | Who decides which network serves |
+| --- | --- | --- |
+| Explicit per-placement priority such as `meta → unity → admob` | **Direct** | Your app configuration. MonetizeKit uses ordered fallback and selects one winner. |
+| AdMob bidding, waterfall, reporting, and console-side optimisation | **AdMob Mediation** | The AdMob console. The app requests one real AdMob unit per placement. |
+| Remove ads after a purchase, while keeping other purchases independent | **Optional Billing** | Your entitlement mapping through `billing-ads`. |
+
+### Core guarantees
+
+- **No surprise double ads.** Direct mode honours your priority and does not let a late callback
+  replace an inline creative or open a second fullscreen ad.
+- **No inline layout jump.** Banner and native placements reserve their declared height until ads
+  load, fail, or are suppressed by an ads-removal entitlement.
+- **One privacy gate.** UMP consent is collected before ad requests; an external CMP can replace it
+  when your organisation provides one.
+- **Only what you include.** Add the adapters and formats that the application actually uses.
+
+## Quick start
+
+1. Pick **Direct** or **AdMob Mediation** using the table above.
+2. [Install only the needed modules](#install), then add the AdMob App ID to the manifest.
+3. [Define stable placements](#define-placements) outside UI code; banner/native always declare
+   `reservedHeightDp`.
+4. Initialise once in `Application.onCreate` using either the
+   [direct example](#initialize-direct-mode) or the [mediation example](#initialize-admob-mediation).
+5. Render inline inventory with [Compose or Views](#render-inline-ads) and call
+   [`show()` for fullscreen inventory](#show-fullscreen-ads) only at natural transitions.
+
+<details>
+<summary><strong>Documentation map</strong></summary>
+
+| Topic | Start here |
+| --- | --- |
+| Packages, composite builds, local AARs, JitPack | [Install](#install) |
+| Placement types and network support | [Define placements](#define-placements) |
+| Direct priority / fallback | [Initialize: direct mode](#initialize-direct-mode) |
+| AdMob bidding / waterfall | [Initialize: AdMob Mediation](#initialize-admob-mediation) |
+| UMP, COPPA, TFUA, US privacy, external CMP | [GDPR and privacy options](#gdpr-and-privacy-options) |
+| Compose, Views, native renderer, banner sizes | [Render inline ads](#render-inline-ads) |
+| Preload, caps, retry, interstitial, rewarded, App Open | [Show fullscreen ads](#show-fullscreen-ads) |
+| Purchases and ad removal | [Optional billing and entitlements](#optional-billing-and-entitlements) |
+| Analytics and ad revenue | [Observe state and events](#observe-state-and-events) |
+| Test devices, UMP test geography, debug sample | [Test-device safety](#test-device-safety) |
+</details>
+
+## AI integration brief
+
+<details>
+<summary><strong>Copy this into ChatGPT, Claude, Cursor, Copilot, or another coding assistant</strong></summary>
+
+```text
+You are integrating the Android library MonetizeKit (package ua.lujek.monetizekit) into an existing
+Kotlin Android app. Make small, compiling changes that preserve the app's architecture.
+
+First choose exactly one delivery mode:
+- Direct mode: configure direct AdMob, Meta Audience Network, and/or Unity Ads. Each placement
+  lists network candidates in explicit priority order. MonetizeKit falls back sequentially and one
+  loaded banner/native ad is final for that slot. Never request all networks in parallel and never
+  show every callback that succeeds.
+- AdMob Mediation mode: configure only admobMediation(...) for each placement, with a real AdMob
+  ad unit mapped in the AdMob console. Do not add direct meta(...), unity(...), or admob(...) to a
+  mediation placement. Bidding and waterfall belong to AdMob.
+
+Rules that must always hold:
+1. Initialise MonetizeKit exactly once in Application.onCreate.
+2. Define typed AdsPlacements as app-owned constants; never place network IDs in Compose/UI code.
+3. Banner and native placements require reservedHeightDp. Render them with AdsBanner/AdsNative in
+   Compose or createBannerSlot/createNativeSlot in Views. Do not remove the reserved space while an
+   ad is loading or fails. If an ads-removal entitlement is active, MonetizeKit collapses it to zero.
+4. Add the AdMob App ID to AndroidManifest.xml. Use the same ID in direct AdMob or mediation
+   configuration when those modes are enabled.
+5. Use MonetizeKit's single UMP consent flow before requesting ads. Surface Privacy Options only
+   through MonetizeKit.showPrivacyOptions(activity). An external certified CMP replaces UMP; it is
+   not a second consent dialog.
+6. Fullscreen ads are explicit: preload when useful and call MonetizeKit.show(activity, placement)
+   only at a natural transition. Rewarded interstitial requires a reward explanation and a skip path.
+7. Test IDs and privacy debug geography belong only to debug builds. Never use production IDs as
+   test IDs or ship test-device configuration.
+8. Billing is optional. Use billing-ads only when a verified entitlement should suppress ads;
+   unrelated purchases must not hide ads.
+
+Before proposing code, list the required Gradle modules and identify the selected delivery mode.
+After code, state how to test consent, inline ads, and fullscreen ads. Refer to the MonetizeKit
+README for exact DSL and network-format support.
+```
+
+</details>
 
 ## Modules
 
@@ -34,8 +135,111 @@ Include only the adapters required by the selected mode and the formats used by 
 
 ## Install
 
-You do not need `maven-publish`, a local Maven repository, or an uploaded artifact to use
-MonetizeKit. Choose one of the following local integration methods.
+Use GitHub Packages when a released binary is needed. For active MonetizeKit development, choose
+one of the local integration methods below instead.
+
+### GitHub Packages
+
+Published library modules use the coordinates `ua.lujek.monetizekit:<module>:<version>` and are
+hosted in `https://maven.pkg.github.com/lujek-sh/MonetizeKit`. A private GitHub Packages registry
+requires authentication for Gradle dependency resolution.
+
+Create a GitHub **classic** personal access token with `read:packages` and permission to read the
+private `lUjek-Sh/MonetizeKit` repository. Store it outside the project, never in Git. Create or
+edit the global Gradle properties file:
+
+```text
+# Windows: %USERPROFILE%\\.gradle\\gradle.properties
+# macOS/Linux: ~/.gradle/gradle.properties
+gpr.user=YOUR_GITHUB_USERNAME
+gpr.key=github_pat_your_token
+```
+
+In the consuming project's `settings.gradle.kts`, add the registry alongside `google()` and
+`mavenCentral()`:
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/lujek-sh/MonetizeKit")
+            credentials {
+                username = providers.gradleProperty("gpr.user").orNull
+                    ?: System.getenv("GITHUB_ACTOR")
+                password = providers.gradleProperty("gpr.key").orNull
+                    ?: System.getenv("GITHUB_TOKEN")
+            }
+        }
+    }
+}
+```
+
+Then include only the required modules. For direct AdMob with Compose, for example:
+
+```kotlin
+val monetizeKitVersion = "0.1.0"
+
+dependencies {
+    implementation("ua.lujek.monetizekit:ads-core:$monetizeKitVersion")
+    implementation("ua.lujek.monetizekit:ads-admob:$monetizeKitVersion")
+    implementation("ua.lujek.monetizekit:ads-compose:$monetizeKitVersion")
+}
+```
+
+For AdMob Mediation with Meta, use `ads-core`, `ads-admob`, and
+`ads-admob-meta-mediation`; do not also add direct `ads-meta`. Add `billing-core`,
+`billing-google-play`, or `billing-ads` only when billing is needed. The published Gradle metadata
+and POM resolve MonetizeKit module dependencies and public SDK dependencies transitively.
+
+#### Publishing a release
+
+`Publish GitHub Packages` is deliberately not triggered by normal branch pushes. It verifies core
+tests and the minified consumer app, then publishes all library modules when either:
+
+1. a `v*` tag is pushed, for example `v0.1.0`; or
+2. the workflow is started manually in the Actions tab with a version such as `0.1.0`.
+
+The workflow uses the repository `GITHUB_TOKEN` with `packages: write`; no publishing token needs
+to be stored as a repository secret. It rejects `SNAPSHOT` versions. The default local version is
+in `gradle.properties` as `monetizekit.version=0.1.0-SNAPSHOT`; keep it as the next development
+version after a release.
+
+### JitPack for a future public repository
+
+JitPack is configured but inactive while the repository is private. If `lUjek-Sh/MonetizeKit` is
+made public, JitPack builds a tagged revision on demand; it does not receive an upload from the
+GitHub Packages workflow. `jitpack.yml` selects JDK 17 and runs `build publishToMavenLocal`, which
+publishes every library module from this multi-module project.
+
+After a public tag such as `v0.1.0`, a consumer can use JitPack without credentials:
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven {
+            url = uri("https://jitpack.io")
+            content { includeGroup("com.github.lUjek-Sh.MonetizeKit") }
+        }
+    }
+}
+```
+
+```kotlin
+dependencies {
+    implementation("com.github.lUjek-Sh.MonetizeKit:ads-core:v0.1.0")
+    implementation("com.github.lUjek-Sh.MonetizeKit:ads-admob:v0.1.0")
+    implementation("com.github.lUjek-Sh.MonetizeKit:ads-compose:v0.1.0")
+}
+```
+
+Use either GitHub Packages or JitPack for a given MonetizeKit version, not both. Keep using a
+release tag for public consumption; branch-SNAPSHOT coordinates are intentionally not documented
+as a production installation method.
 
 ### Recommended: composite build from the source checkout
 
@@ -225,7 +429,7 @@ Declare placements as application-owned constants. A network ID never appears in
 
 ```kotlin
 object AppAds {
-    val homeBanner = AdsPlacements.banner("home_banner", reservedHeightDp = 50)
+    val homeBanner = AdsPlacements.banner("home_banner", reservedHeightDp = 74)
     val articleNative = AdsPlacements.native("article_native", reservedHeightDp = 280)
     val levelComplete = AdsPlacements.interstitial("level_complete")
     val rewardCoins = AdsPlacements.rewarded("reward_coins")
@@ -341,7 +545,8 @@ creates several slots, each slot is independent because it represents a separate
 ## Initialize: AdMob Mediation
 
 Configure Meta/Unity bidding or waterfall, placement mappings, and price settings in AdMob. Code
-contains only the AdMob ad unit.
+contains the **real AdMob ad unit ID** that is attached to that mediation group; Google sample ad
+units can serve Google ads only and can never reach the Meta or Unity mapping.
 
 ```kotlin
 MonetizeKit.initialize(this) {
@@ -349,6 +554,12 @@ MonetizeKit.initialize(this) {
         applicationId = "ca-app-pub-xxxxxxxxxxxxxxxx~yyyyyyyyyy"
         testing(enabled = BuildConfig.DEBUG) {
             testDevice("ADMOB_TEST_DEVICE_ID")
+        }
+        mediationTesting(enabled = BuildConfig.DEBUG) {
+            meta {
+                // Meta hashed test-device ID, not the AdMob test-device ID.
+                testDevice("META_TEST_DEVICE_HASH")
+            }
         }
     }
 
@@ -370,7 +581,16 @@ MonetizeKit.initialize(this) {
 
 Mediation accepts exactly one `admobMediation(...)` source for every placement. Adding `meta`,
 `unity`, or direct `admob` to it fails fast because the AdMob console is the sole owner of fallback
-and bidding.
+and bidding. `mediationTesting { meta { ... } }` only calls `AdSettings.addTestDevice(...)` before
+the Meta mediation adapter is initialized; it does not enable direct Meta requests.
+
+To test mediated Meta safely, use the real AdMob units that are mapped to your Meta placements,
+configure the device in both `testing { ... }` and `mediationTesting { meta { ... } }`, and enable
+the app's test mode in the Meta dashboard. Install Facebook and log in on the test device, then use
+Ad Inspector's **single ad source** test for Meta. For Unity mediation, configure the device in
+`testing { ... }` and enable the test device (or forced test mode) in the Unity Ads dashboard; no
+extra Unity SDK call is required. Disable testing in the AdMob, Meta, and Unity dashboards before
+release.
 
 ## GDPR and privacy options
 
@@ -584,9 +804,34 @@ MonetizeKit.initialize(this) {
 }
 ```
 
-A standard banner is network-owned creative, so MonetizeKit does not place this native-card chrome
-around it or restyle its content. Use `BannerSize` to choose its format and reserve the necessary
-space; use `nativeAppearance` when the layout needs this card design.
+### Configure the banner frame
+
+Banner creative remains owned by its ad network, but MonetizeKit can render a rounded frame around
+it without changing its assets, click handling, or attribution. The frame applies consistently to
+direct AdMob/Meta/Unity inventory and to AdMob Mediation.
+
+```kotlin
+MonetizeKit.initialize(this) {
+    bannerAppearance(
+        BannerAppearance(
+            frameBackgroundColor = 0xFF1B1B21.toInt(),
+            frameStrokeColor = 0xFF4C4C57.toInt(),
+            attributionBackgroundColor = 0xFF3A3A44.toInt(),
+            attributionTextColor = 0xFFEEEBF2.toInt(),
+            contentPaddingDp = 6,
+            cornerRadiusDp = 16,
+            frameStrokeWidthDp = 1,
+        ),
+    )
+
+    // direct { ... } or admobMediation { ... }, GDPR, and placements
+}
+```
+
+The frame always draws a localized `Ad` / `Реклама` attribution label above the network creative.
+It never covers or changes the creative itself. Its 20dp height and 4dp spacing are part of the
+outer height: a 50dp banner needs at least `reservedHeightDp = 74`. With `contentPaddingDp = 6`,
+reserve at least `86dp`; reserve more for adaptive or network-specific banner heights.
 
 A custom renderer must display a clear localized `Ad`/`Sponsored` label, provide `headlineView`,
 reserve real space for `mediaContainer`, and omit optional asset views when their values are absent.
@@ -776,6 +1021,7 @@ Never put a testing ID or Unity test mode behind a hard-coded `true`. Use
 
 - `AdMobTestingBuilder.testDevice(...)` IDs;
 - `MetaTestingBuilder.testDevice(...)` hashes;
+- `AdMobMediationTestingBuilder.meta { testDevice(...) }` hashes;
 - Unity test mode;
 - UMP test-device hashes and forced EEA geography.
 
@@ -896,14 +1142,33 @@ with an AdMob-Mediation request.
 
 For direct Meta or Unity verification, fill only the formats you use in `DebugMetaIds` and
 `DebugUnityIds` in [`SampleApplication.kt`](app/src/main/kotlin/ua/lujek/monetizekit/sample/SampleApplication.kt).
-An empty ID leaves its control disabled. Add the Meta test-device hash before requesting Meta ads;
-the debug sample enables Unity SDK test mode, but test mode must also be enabled for the Android app
-in the Unity dashboard. These adapters and the inspector exist only in the sample's debug variant.
+An empty ID leaves its control disabled. For direct Meta, copy the **hashed device ID** from Meta's
+[test-device flow](https://developers.facebook.com/documentation/audience-network/setting-up/test/test-device)
+into `DebugMetaIds.TEST_DEVICE_HASH`; it is neither the Android advertising ID nor the AdMob
+test-device ID. The sample passes it to `AdSettings.addTestDevice(...)` before Meta can load an ad,
+and only in a debug build. The debug sample enables Unity SDK test mode, but test mode must also be
+enabled for the Android app in the Unity dashboard.
+
+For Meta through AdMob Mediation use `admobMediation { mediationTesting(...) { meta { ... } } }`,
+not `DebugMetaIds`: it invokes `AdSettings.addTestDevice(...)` without enabling direct Meta. The
+mediated request must use your real AdMob unit ID mapped to that Meta placement — Google's demo
+units cannot test a mediation chain. These adapters and the inspector exist only in the sample's
+debug variant.
+
+To test a real UMP form in the sample, replace the default Google demo App ID in
+[`sample_debug_ids.xml`](app/src/debug/res/values/sample_debug_ids.xml) with the App ID from your
+AdMob account, and publish a Privacy & messaging message for that app. The App ID must be a manifest
+resource because UMP reads it before Kotlin code runs. This does not require replacing the sample's
+Google demo **ad-unit** IDs.
 
 The **Privacy test profile** controls persist the selected profile and restart the debug process so
 the policy is applied before any network initialization. They cover standard UMP, forced UMP EEA,
-COPPA, TFUA, US restricted data processing, US GPP, and the external-CMP contract. Put the UMP
-test-device hash in `DebugUmpIds` before using either forced UMP geography. The external-CMP profile
+COPPA, TFUA, US restricted data processing, US GPP, and the external-CMP contract. First run
+**Standard UMP** and copy the separate UMP hash from the Logcat line containing
+`addTestDeviceHashedId(...)` — an AdMob `setTestDeviceIds(...)` ID is not valid here. Paste it in
+the sample's **UMP test-device hash** field, select UMP EEA or US GPP, then use **Reset UMP, apply
+profile, and restart debug app**. This calls UMP's test-only `reset()` before restart, so the form
+can be shown again. `DebugUmpIds` remains an optional source-code fallback. The external-CMP profile
 is an interactive contract test only: it validates the `PrivacyConsentProvider` lifecycle but is not
 a certified CMP and must never be copied into production.
 
@@ -915,7 +1180,8 @@ a certified CMP and must never be copied into production.
 official Meta/Unity AdMob-mediation adapters exactly as a host app would. It has no launcher
 activity, is never installed by CI, and uses public demo/placeholder IDs solely to keep the
 consumer configuration reachable by R8. CI also inspects the shrinked APK and fails unless
-`FacebookMediationAdapter` and `UnityMediationAdapter` are retained.
+`FacebookMediationAdapter`, `UnityMediationAdapter`, and MonetizeKit's Meta-mediation initializer
+are retained.
 
 ```shell
 ./gradlew :ads-core:testDebugUnitTest :consumer-r8-smoke:assembleRelease

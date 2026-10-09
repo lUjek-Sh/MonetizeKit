@@ -14,6 +14,7 @@ import org.junit.runner.RunWith
 import ua.lujek.monetizekit.core.AdsNetwork
 import ua.lujek.monetizekit.core.DefaultNativeAdRenderer
 import ua.lujek.monetizekit.core.NativeAdContent
+import ua.lujek.monetizekit.core.NativeAdAppearance
 
 @RunWith(AndroidJUnit4::class)
 class DefaultNativeAdRendererInstrumentedTest {
@@ -35,7 +36,7 @@ class DefaultNativeAdRendererInstrumentedTest {
         )
 
         val width = context.dp(320)
-        val height = context.dp(280)
+        val height = context.dp(NativeAdAppearance().minimumReservedHeightDp)
         binding.root.measure(
             View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
@@ -47,10 +48,20 @@ class DefaultNativeAdRendererInstrumentedTest {
         assertNotNull(binding.callToActionView)
         assertNotNull(binding.advertiserView)
         assertNotNull(binding.iconView)
-        assertNotNull(binding.mediaContainer)
+        val mediaContainer = requireNotNull(binding.mediaContainer)
         assertEquals(View.VISIBLE, binding.headlineView?.visibility)
-        assertTrue(binding.mediaContainer!!.height > 0)
-        assertTrue(binding.root.background is GradientDrawable)
+        assertTrue(mediaContainer.height > 0)
+        val card = binding.root
+        assertTrue(card.background is GradientDrawable)
+        val attributionLayoutParams = (card as android.widget.LinearLayout)
+            .getChildAt(0)
+            .layoutParams as android.widget.LinearLayout.LayoutParams
+        assertEquals(ViewGroup.LayoutParams.WRAP_CONTENT, attributionLayoutParams.width)
+        assertEquals(android.view.Gravity.CENTER_HORIZONTAL, attributionLayoutParams.gravity)
+        assertEquals(context.dp(180), mediaContainer.height)
+        assertTrue(mediaContainer.bottom <= card.height)
+        assertTrue(binding.bodyView!!.bottom <= card.height)
+        assertTrue(binding.callToActionView!!.bottom <= card.height)
     }
 
     @Test

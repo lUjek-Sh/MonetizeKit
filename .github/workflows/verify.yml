@@ -37,3 +37,4 @@ jobs:
           analyzer="${ANDROID_HOME}/cmdline-tools/latest/bin/apkanalyzer"
           "${analyzer}" dex packages "${apk}" | grep -Fq "com.google.ads.mediation.facebook.FacebookMediationAdapter"
           "${analyzer}" dex packages "${apk}" | grep -Fq "com.google.ads.mediation.unity.UnityMediationAdapter"
+          "${analyzer}" dex packages "${apk}" | grep -Fq "ua.lujek.monetizekit.mediation.meta.MetaAdMobMediationInitializer"

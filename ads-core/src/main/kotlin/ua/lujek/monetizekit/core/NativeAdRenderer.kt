@@ -11,6 +11,8 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.ceil
+import kotlin.math.max
 
 /** Network-neutral data that may be safely rendered by an application-owned native ad layout. */
 data class NativeAdContent(
@@ -79,6 +81,8 @@ data class NativeAdAppearance(
     val attributionHorizontalPaddingDp: Int = 6,
     val attributionVerticalPaddingDp: Int = 2,
     val attributionCornerRadiusDp: Int = 7,
+    /** Fixed height of the SDK-owned MediaView. */
+    val mediaHeightDp: Int = 180,
     val callToActionMinHeightDp: Int = 40,
     val callToActionHorizontalPaddingDp: Int = 12,
     val callToActionVerticalPaddingDp: Int = 8,
@@ -104,6 +108,7 @@ data class NativeAdAppearance(
             "Native card attribution padding must not be negative."
         }
         require(attributionCornerRadiusDp >= 0) { "Native card attributionCornerRadiusDp must not be negative." }
+        require(mediaHeightDp > 0) { "Native card media height must be greater than zero." }
         require(callToActionMinHeightDp > 0) { "Native card callToActionMinHeightDp must be greater than zero." }
         require(callToActionHorizontalPaddingDp >= 0 && callToActionVerticalPaddingDp >= 0) {
             "Native card call-to-action padding must not be negative."
@@ -112,6 +117,47 @@ data class NativeAdAppearance(
         require(headlineTextSizeSp > 0f && secondaryTextSizeSp > 0f && callToActionTextSizeSp > 0f) {
             "Native card text sizes must be greater than zero."
         }
+    }
+
+    /**
+     * Minimum native placement reservation for the built-in renderer when every supported asset
+     * is present: two-line headline, advertiser, three-line body, CTA, and [mediaHeightDp].
+     *
+     * The value includes a small rounding allowance for Android text measurement at the default
+     * font scale. Apps that support an increased system font scale should reserve extra space or
+     * supply a custom [NativeAdRenderer].
+     */
+    val minimumReservedHeightDp: Int
+        get() {
+            val attributionHeight = max(
+                attributionMinimumSizeDp,
+                lineHeightDp(textSizeSp = 11f, maxLines = 1) + attributionVerticalPaddingDp * 2,
+            )
+            val headlineHeight = lineHeightDp(headlineTextSizeSp, maxLines = 2)
+            val advertiserHeight = lineHeightDp(secondaryTextSizeSp, maxLines = 1)
+            val identityHeight = max(iconSizeDp, headlineHeight + identitySpacingDp + advertiserHeight)
+            val bodyHeight = lineHeightDp(secondaryTextSizeSp, maxLines = 3)
+            val callToActionHeight = max(
+                callToActionMinHeightDp,
+                lineHeightDp(callToActionTextSizeSp, maxLines = 1) + callToActionVerticalPaddingDp * 2,
+            )
+            return contentPaddingDp * 2 +
+                attributionHeight +
+                headerTopMarginDp +
+                identityHeight +
+                mediaTopMarginDp +
+                mediaHeightDp +
+                itemSpacingDp + bodyHeight +
+                itemSpacingDp + callToActionHeight +
+                TEXT_MEASUREMENT_ALLOWANCE_DP
+        }
+
+    private fun lineHeightDp(textSizeSp: Float, maxLines: Int): Int =
+        ceil(textSizeSp * DEFAULT_LINE_HEIGHT_MULTIPLIER * maxLines).toInt()
+
+    private companion object {
+        const val DEFAULT_LINE_HEIGHT_MULTIPLIER = 1.25f
+        const val TEXT_MEASUREMENT_ALLOWANCE_DP = 4
     }
 }
 
@@ -241,7 +287,7 @@ object DefaultNativeAdRenderer : NativeAdRenderer {
             )
         }
 
-        val root = LinearLayout(context).apply {
+        val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(
                 dimensions.contentPadding,
@@ -254,12 +300,27 @@ object DefaultNativeAdRenderer : NativeAdRenderer {
                 setStroke(dimensions.cardStrokeWidth, appearance.cardStrokeColor)
                 cornerRadius = dimensions.cardCornerRadius.toFloat()
             }
+            // MediaView is supplied by the ad SDK and can fill the remaining card area. Keep it
+            // inside the rounded card outline instead of letting its rectangular surface cover
+            // the bottom corners.
+            clipToOutline = true
 
-            addView(attributionView)
+            addView(
+                attributionView,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    gravity = android.view.Gravity.CENTER_HORIZONTAL
+                },
+            )
             addView(identityRow, verticalLayoutParams(topMargin = dimensions.headerTopMargin))
             addView(
                 mediaContainer,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dimensions.mediaHeight,
+                ).apply {
                     topMargin = dimensions.mediaTopMargin
                 },
             )
@@ -267,7 +328,7 @@ object DefaultNativeAdRenderer : NativeAdRenderer {
             callToActionView?.let { addView(it, verticalLayoutParams(topMargin = dimensions.itemSpacing)) }
         }
         return NativeAdRenderBinding(
-            root = root,
+            root = card,
             headlineView = headlineView,
             bodyView = bodyView,
             callToActionView = callToActionView,
@@ -293,6 +354,7 @@ private class DefaultNativeAdDimensions(
     private val density = context.resources.displayMetrics.density
 
     val contentPadding: Int = appearance.contentPaddingDp.dp
+    val mediaHeight: Int = appearance.mediaHeightDp.dp
     val itemSpacing: Int = appearance.itemSpacingDp.dp
     val headerTopMargin: Int = appearance.headerTopMarginDp.dp
     val mediaTopMargin: Int = appearance.mediaTopMarginDp.dp
