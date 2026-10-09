@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -511,37 +510,33 @@ object MonetizeKit {
     }
 
     private suspend fun preloadWithRetryInternal(placement: FullscreenPlacement): AdLoadResult {
-        var attempt = 1
-        while (true) {
-            when (
-                val result = fullscreenOperations.forPlacement(placement.id) {
-                    preloadOnceInternal(placement)
-                }
-            ) {
-                is FullscreenPreloadAttempt.Loaded -> {
-                    mutableEvents.emit(AdsEvent.AdPreloaded(placement, result.network))
-                    return AdLoadResult.Loaded
-                }
-
-                FullscreenPreloadAttempt.Suppressed -> return AdLoadResult.Suppressed
-
-                is FullscreenPreloadAttempt.Failed -> {
-                    if (!result.isRetryable || attempt >= result.retryPolicy.maxAttempts) {
-                        return failPreload(placement, result.error)
+        return when (
+            val result = retryFullscreenPreload(
+                loadAttempt = {
+                    fullscreenOperations.forPlacement(placement.id) {
+                        preloadOnceInternal(placement)
                     }
-                    val delayMillis = result.retryPolicy.delayAfterFailedAttempt(attempt)
+                },
+                onRetryScheduled = { error, nextAttempt, delayMillis ->
                     mutableEvents.emit(
                         AdsEvent.AdPreloadRetryScheduled(
                             placement = placement,
-                            nextAttempt = attempt + 1,
+                            nextAttempt = nextAttempt,
                             delayMillis = delayMillis,
-                            error = result.error,
+                            error = error,
                         ),
                     )
-                    delay(delayMillis)
-                    attempt += 1
-                }
+                },
+            )
+        ) {
+            is FullscreenPreloadAttempt.Loaded -> {
+                mutableEvents.emit(AdsEvent.AdPreloaded(placement, result.network))
+                AdLoadResult.Loaded
             }
+
+            FullscreenPreloadAttempt.Suppressed -> AdLoadResult.Suppressed
+
+            is FullscreenPreloadAttempt.Failed -> failPreload(placement, result.error)
         }
     }
 
@@ -652,14 +647,4 @@ private class AdsRuntime(
 ) {
     val readyNetworks = ConcurrentHashMap.newKeySet<AdsNetwork>()
     val frequencyCapStore = FullscreenFrequencyCapStore(application)
-}
-
-private sealed interface FullscreenPreloadAttempt {
-    data class Loaded(val network: AdsNetwork) : FullscreenPreloadAttempt
-    data object Suppressed : FullscreenPreloadAttempt
-    data class Failed(
-        val error: AdsError,
-        val isRetryable: Boolean,
-        val retryPolicy: FullscreenRetryPolicy,
-    ) : FullscreenPreloadAttempt
 }

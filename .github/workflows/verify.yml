@@ -29,3 +29,11 @@ jobs:
 
       - name: Run core unit tests and R8 consumer smoke test
         run: ./gradlew :ads-core:testDebugUnitTest :consumer-r8-smoke:assembleRelease --stacktrace
+
+      - name: Verify mediation adapters survive R8
+        shell: bash
+        run: |
+          apk="consumer-r8-smoke/build/outputs/apk/release/consumer-r8-smoke-release-unsigned.apk"
+          analyzer="${ANDROID_HOME}/cmdline-tools/latest/bin/apkanalyzer"
+          "${analyzer}" dex packages "${apk}" | grep -Fq "com.google.ads.mediation.facebook.FacebookMediationAdapter"
+          "${analyzer}" dex packages "${apk}" | grep -Fq "com.google.ads.mediation.unity.UnityMediationAdapter"

@@ -8,6 +8,11 @@ import ua.lujek.monetizekit.core.MonetizeKit
  * A deliberately small consumer application compiled with R8. It represents a host that ships
  * every direct adapter; CI only assembles it and never installs or requests live advertising.
  */
+/**
+ * Deliberately contains both direct and mediation adapter dependencies. Runtime configuration
+ * selects direct mode only, because MonetizeKit rejects mixing direct and mediation routes in one
+ * placement; the release build verifies each adapter's consumer rules survive R8 together.
+ */
 class ConsumerSmokeApplication : Application() {
     override fun onCreate() {
         super.onCreate()

@@ -44,4 +44,36 @@ class FullscreenOperationLocksTest {
         second.await()
         assertEquals(1, maxActiveShows.get())
     }
+
+    @Test
+    fun `concurrent shows for the same placement run exactly once at a time`() = runBlocking {
+        val locks = FullscreenOperationLocks()
+        val firstStarted = CompletableDeferred<Unit>()
+        val allowFirstToFinish = CompletableDeferred<Unit>()
+        val secondStarted = CompletableDeferred<Unit>()
+        val invocations = AtomicInteger(0)
+
+        val first = async {
+            locks.show(PlacementId.of("level_complete")) {
+                invocations.incrementAndGet()
+                firstStarted.complete(Unit)
+                allowFirstToFinish.await()
+            }
+        }
+        firstStarted.await()
+
+        val second = async {
+            locks.show(PlacementId.of("level_complete")) {
+                invocations.incrementAndGet()
+                secondStarted.complete(Unit)
+            }
+        }
+        yield()
+
+        assertFalse(secondStarted.isCompleted)
+        allowFirstToFinish.complete(Unit)
+        first.await()
+        second.await()
+        assertEquals(2, invocations.get())
+    }
 }

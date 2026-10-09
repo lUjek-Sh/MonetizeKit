@@ -34,8 +34,132 @@ Include only the adapters required by the selected mode and the formats used by 
 
 ## Install
 
-The library currently builds as a multi-module project. Add project dependencies in the host
-application's `build.gradle.kts`.
+You do not need `maven-publish`, a local Maven repository, or an uploaded artifact to use
+MonetizeKit. Choose one of the following local integration methods.
+
+### Recommended: composite build from the source checkout
+
+Keep the MonetizeKit checkout next to the host project, for example:
+
+```text
+workspace/
+├── MonetizeKit/
+└── MyApplication/
+```
+
+In the host project's `settings.gradle.kts`, register the checkout and explicitly substitute only
+the MonetizeKit modules the application will use:
+
+```kotlin
+includeBuild("../MonetizeKit") {
+    dependencySubstitution {
+        substitute(module("ua.lujek.monetizekit.local:ads-core"))
+            .using(project(":ads-core"))
+        substitute(module("ua.lujek.monetizekit.local:ads-admob"))
+            .using(project(":ads-admob"))
+        substitute(module("ua.lujek.monetizekit.local:ads-meta"))
+            .using(project(":ads-meta"))
+        substitute(module("ua.lujek.monetizekit.local:ads-unity"))
+            .using(project(":ads-unity"))
+        substitute(module("ua.lujek.monetizekit.local:ads-compose"))
+            .using(project(":ads-compose"))
+        substitute(module("ua.lujek.monetizekit.local:ads-admob-meta-mediation"))
+            .using(project(":ads-admob-meta-mediation"))
+        substitute(module("ua.lujek.monetizekit.local:ads-admob-unity-mediation"))
+            .using(project(":ads-admob-unity-mediation"))
+        substitute(module("ua.lujek.monetizekit.local:billing-core"))
+            .using(project(":billing-core"))
+        substitute(module("ua.lujek.monetizekit.local:billing-google-play"))
+            .using(project(":billing-google-play"))
+        substitute(module("ua.lujek.monetizekit.local:billing-ads"))
+            .using(project(":billing-ads"))
+    }
+}
+```
+
+Then use ordinary module coordinates in the host app's `app/build.gradle.kts`. Gradle resolves
+them from the local checkout; it does not contact a MonetizeKit Maven repository:
+
+```kotlin
+dependencies {
+    implementation("ua.lujek.monetizekit.local:ads-core:local")
+    implementation("ua.lujek.monetizekit.local:ads-admob:local")
+    implementation("ua.lujek.monetizekit.local:ads-compose:local")
+}
+```
+
+Composite build is the preferred development workflow: project dependencies, consumer ProGuard
+rules, and third-party transitive dependencies are all resolved by Gradle automatically.
+
+### Local release AAR files
+
+Use this when the host application must receive binaries rather than the MonetizeKit source tree.
+Build only the modules selected by the app. For example, direct AdMob + Compose on Windows:
+
+```powershell
+.\gradlew.bat :ads-core:assembleRelease :ads-admob:assembleRelease :ads-compose:assembleRelease
+```
+
+On macOS/Linux, use the same task list with `./gradlew`. Every artifact is written to its module's
+`build/outputs/aar/` directory, for example:
+
+```text
+ads-core/build/outputs/aar/ads-core-release.aar
+ads-admob/build/outputs/aar/ads-admob-release.aar
+ads-compose/build/outputs/aar/ads-compose-release.aar
+```
+
+Copy the selected AAR files to the host app, for example `app/libs/monetizekit/`, and reference
+them directly — no `flatDir` or Maven repository is required:
+
+```kotlin
+dependencies {
+    implementation(files("libs/monetizekit/ads-core-release.aar"))
+    implementation(files("libs/monetizekit/ads-admob-release.aar"))
+    implementation(files("libs/monetizekit/ads-compose-release.aar"))
+}
+```
+
+An AAR is not a fat AAR: it deliberately does not embed its third-party dependencies. Keep the
+normal `google()` and `mavenCentral()` repositories for those public SDKs, then add the runtime
+dependencies for each selected local AAR. These versions match this checkout:
+
+```kotlin
+dependencies {
+    // Required by ads-core.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    implementation("io.insert-koin:koin-core:4.2.2")
+    implementation("androidx.lifecycle:lifecycle-runtime:2.11.0")
+    implementation("androidx.datastore:datastore-preferences:1.2.1")
+    implementation("com.google.android.ump:user-messaging-platform:4.0.0")
+
+    // Add for direct AdMob or any AdMob Mediation setup.
+    implementation("com.google.android.gms:play-services-ads:25.5.0")
+
+    // Add only for the corresponding direct adapter.
+    implementation("com.facebook.android:audience-network-sdk:6.22.0") // ads-meta
+    implementation("com.unity3d.ads:unity-ads:4.21.0")                 // ads-unity
+
+    // Add only for the corresponding AdMob Mediation AAR.
+    implementation("com.google.ads.mediation:facebook:6.22.0.1")      // Meta mediation
+    implementation("com.google.ads.mediation:unity:4.21.0.0")         // Unity mediation
+}
+```
+
+For `ads-compose`, also add the same Compose BOM and `foundation`, `runtime`, and `ui`
+dependencies used by the host application. For billing AARs add
+`com.android.billingclient:billing-ktx:9.1.0`; include `billing-core-release.aar` before
+`billing-google-play-release.aar` or `billing-ads-release.aar`.
+
+Do not combine direct Meta/Unity AARs with their AdMob-mediation AAR for the same configuration;
+the normal direct-versus-mediation rule still applies. Consumer R8 rules are already packaged in
+the local AARs — the host must not copy them manually.
+
+### When MonetizeKit modules are subprojects of the same build
+
+The following `project(":…")` declarations work only when the MonetizeKit modules have been
+copied into, or included by, the host's own `settings.gradle.kts`:
 
 ### Direct mode
 
@@ -583,13 +707,29 @@ the height-reserved Compose banner/native slots. It is a verification tool, not 
 
 ### R8 consumer smoke test
 
-`:consumer-r8-smoke` is an internal application that links the direct AdMob, Meta, and Unity
-adapters exactly as a host app would. It has no launcher activity, is never installed by CI, and
-uses public demo/placeholder IDs solely to keep the consumer configuration reachable by R8. Run:
+`:consumer-r8-smoke` is an internal application that links the direct AdMob, Meta, Unity and the
+official Meta/Unity AdMob-mediation adapters exactly as a host app would. It has no launcher
+activity, is never installed by CI, and uses public demo/placeholder IDs solely to keep the
+consumer configuration reachable by R8. CI also inspects the shrinked APK and fails unless
+`FacebookMediationAdapter` and `UnityMediationAdapter` are retained.
 
 ```shell
 ./gradlew :ads-core:testDebugUnitTest :consumer-r8-smoke:assembleRelease
 ```
+
+### Android behavior test matrix
+
+With an Android device or emulator connected, run:
+
+```shell
+./gradlew :ads-core:connectedDebugAndroidTest
+```
+
+The device suite uses deterministic fake adapters and consent provider. It covers the external
+consent and Privacy Options flow, banner creation before consent versus native creation after the
+SDK is ready, inline pause/resume/destroy forwarding, and persisted DataStore frequency-cap
+history. Core unit tests additionally verify same-placement concurrent `show()` serialization and
+that a retry waits then performs the next actual preload attempt.
 
 `assembleRelease` produces a shrinked APK and verifies merged adapter providers plus every
 library's consumer ProGuard rules. The same command runs in GitHub Actions on push and pull request.

@@ -31,15 +31,35 @@ internal data class NativeAttempt(
     val adUnitId: String,
 )
 
+/** Dependencies for an inline slot. The public constructor always uses the process facade. */
+internal data class InlineSlotEnvironment(
+    val kitState: StateFlow<MonetizeKitState>,
+    val adsAccess: StateFlow<AdsAccess>,
+    val eventReporter: AdsEventReporter,
+)
+
+private fun monetizeKitInlineEnvironment(): InlineSlotEnvironment = InlineSlotEnvironment(
+    kitState = MonetizeKit.state,
+    adsAccess = MonetizeKit.adsAccess,
+    eventReporter = MonetizeKit.adapterEventReporter(),
+)
+
 /**
  * An Android View host with ordered fallback. It may be created before consent and network
  * initialization finish; calling [load] then waits for a ready SDK instead of permanently failing.
  * Prefer AdsBanner from ads-compose in Compose UI.
  */
-class AdsBannerSlot(
+class AdsBannerSlot internal constructor(
     context: Context,
     private val reservedHeightDp: Int,
+    private val environment: InlineSlotEnvironment,
 ) : FrameLayout(context) {
+    constructor(context: Context, reservedHeightDp: Int) : this(
+        context = context,
+        reservedHeightDp = reservedHeightDp,
+        environment = monetizeKitInlineEnvironment(),
+    )
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableState = MutableStateFlow<AdViewState>(AdViewState.Idle)
     private var candidateProvider: (() -> List<BannerAttempt>)? = null
@@ -48,7 +68,7 @@ class AdsBannerSlot(
     private var observationJob: Job? = null
     private var released = false
     private var waitingForSdk = false
-    private var adsAllowed = MonetizeKit.adsAccess.value == AdsAccess.Allowed
+    private var adsAllowed = environment.adsAccess.value == AdsAccess.Allowed
     private var lifecycleOwner: LifecycleOwner? = null
     private val lifecycleObserver = object : DefaultLifecycleObserver {
         override fun onResume(owner: LifecycleOwner) {
@@ -68,7 +88,7 @@ class AdsBannerSlot(
 
     init {
         scope.launch {
-            MonetizeKit.adsAccess.collect { access ->
+            environment.adsAccess.collect { access ->
                 val nowAllowed = access == AdsAccess.Allowed
                 if (adsAllowed == nowAllowed) return@collect
                 adsAllowed = nowAllowed
@@ -82,7 +102,7 @@ class AdsBannerSlot(
             }
         }
         scope.launch {
-            MonetizeKit.state.collect { kitState ->
+            environment.kitState.collect { kitState ->
                 when (kitState) {
                     is MonetizeKitState.Ready -> {
                         if (waitingForSdk && adsAllowed && !released) {
@@ -132,7 +152,7 @@ class AdsBannerSlot(
 
     fun load() {
         if (!adsAllowed || released || mutableState.value is AdViewState.Loading || mutableState.value is AdViewState.Loaded) return
-        if (MonetizeKit.state.value !is MonetizeKitState.Ready) {
+        if (environment.kitState.value !is MonetizeKitState.Ready) {
             waitingForSdk = true
             return
         }
@@ -179,7 +199,7 @@ class AdsBannerSlot(
                 context = context,
                 placement = attempt.placement,
                 adUnitId = attempt.adUnitId,
-                eventReporter = MonetizeKit.adapterEventReporter(),
+                eventReporter = environment.eventReporter,
             )
         }.getOrNull()
         if (controller == null) {
@@ -243,10 +263,17 @@ class AdsBannerSlot(
  * An Android View host with ordered fallback for native placements. It supports the same delayed
  * creation and lifecycle behavior as [AdsBannerSlot].
  */
-class AdsNativeSlot(
+class AdsNativeSlot internal constructor(
     context: Context,
     private val reservedHeightDp: Int,
+    private val environment: InlineSlotEnvironment,
 ) : FrameLayout(context) {
+    constructor(context: Context, reservedHeightDp: Int) : this(
+        context = context,
+        reservedHeightDp = reservedHeightDp,
+        environment = monetizeKitInlineEnvironment(),
+    )
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableState = MutableStateFlow<AdViewState>(AdViewState.Idle)
     private var candidateProvider: (() -> List<NativeAttempt>)? = null
@@ -255,7 +282,7 @@ class AdsNativeSlot(
     private var observationJob: Job? = null
     private var released = false
     private var waitingForSdk = false
-    private var adsAllowed = MonetizeKit.adsAccess.value == AdsAccess.Allowed
+    private var adsAllowed = environment.adsAccess.value == AdsAccess.Allowed
     private var lifecycleOwner: LifecycleOwner? = null
     private val lifecycleObserver = object : DefaultLifecycleObserver {
         override fun onResume(owner: LifecycleOwner) {
@@ -275,7 +302,7 @@ class AdsNativeSlot(
 
     init {
         scope.launch {
-            MonetizeKit.adsAccess.collect { access ->
+            environment.adsAccess.collect { access ->
                 val nowAllowed = access == AdsAccess.Allowed
                 if (adsAllowed == nowAllowed) return@collect
                 adsAllowed = nowAllowed
@@ -289,7 +316,7 @@ class AdsNativeSlot(
             }
         }
         scope.launch {
-            MonetizeKit.state.collect { kitState ->
+            environment.kitState.collect { kitState ->
                 when (kitState) {
                     is MonetizeKitState.Ready -> {
                         if (waitingForSdk && adsAllowed && !released) {
@@ -336,7 +363,7 @@ class AdsNativeSlot(
 
     fun load() {
         if (!adsAllowed || released || mutableState.value is AdViewState.Loading || mutableState.value is AdViewState.Loaded) return
-        if (MonetizeKit.state.value !is MonetizeKitState.Ready) {
+        if (environment.kitState.value !is MonetizeKitState.Ready) {
             waitingForSdk = true
             return
         }
@@ -383,7 +410,7 @@ class AdsNativeSlot(
                 context = context,
                 placement = attempt.placement,
                 adUnitId = attempt.adUnitId,
-                eventReporter = MonetizeKit.adapterEventReporter(),
+                eventReporter = environment.eventReporter,
             )
         }.getOrNull()
         if (controller == null) {

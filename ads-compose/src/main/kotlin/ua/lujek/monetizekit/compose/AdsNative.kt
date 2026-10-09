@@ -14,6 +14,11 @@ import ua.lujek.monetizekit.core.NativePlacement
 /**
  * Renders a native placement in a container whose height is reserved by [NativePlacement].
  * The placeholder stays in the layout on loading, no-fill, and failure, avoiding content movement.
+ *
+ * This is the Compose-facing API, but it intentionally uses an Android View host internally:
+ * Google Mobile Ads and Meta native creatives require SDK-owned asset and media Views for click
+ * registration and media rendering. Hiding that bridge preserves a Compose-only call site without
+ * exposing an unsafe pure-Compose renderer that cannot register the native assets correctly.
  */
 @Composable
 fun AdsNative(

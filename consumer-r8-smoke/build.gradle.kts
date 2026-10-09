@@ -36,4 +36,6 @@ dependencies {
     implementation(project(":ads-admob"))
     implementation(project(":ads-meta"))
     implementation(project(":ads-unity"))
+    implementation(project(":ads-admob-meta-mediation"))
+    implementation(project(":ads-admob-unity-mediation"))
 }
