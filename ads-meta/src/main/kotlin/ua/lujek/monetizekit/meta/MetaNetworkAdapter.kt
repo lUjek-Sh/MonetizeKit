@@ -26,22 +26,22 @@ import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import ua.lujek.monetizekit.core.AdFormat
 import ua.lujek.monetizekit.core.AdLoadResult
 import ua.lujek.monetizekit.core.AdReward
 import ua.lujek.monetizekit.core.AdShowResult
+import ua.lujek.monetizekit.core.AdViewState
 import ua.lujek.monetizekit.core.AdsConfiguration
 import ua.lujek.monetizekit.core.AdsError
 import ua.lujek.monetizekit.core.AdsNetwork
 import ua.lujek.monetizekit.core.AdsNetworkAdapter
-import ua.lujek.monetizekit.core.AdFormat
 import ua.lujek.monetizekit.core.BannerAdController
-import ua.lujek.monetizekit.core.AdViewState
 import ua.lujek.monetizekit.core.BannerPlacement
 import ua.lujek.monetizekit.core.FullscreenPlacement
 import ua.lujek.monetizekit.core.InterstitialPlacement
-import ua.lujek.monetizekit.core.NetworkInitializationResult
 import ua.lujek.monetizekit.core.NativeAdController
 import ua.lujek.monetizekit.core.NativePlacement
+import ua.lujek.monetizekit.core.NetworkInitializationResult
 import ua.lujek.monetizekit.core.RewardedPlacement
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
@@ -75,19 +75,13 @@ internal class MetaNetworkAdapter : AdsNetworkAdapter {
         placement: FullscreenPlacement,
         adUnitId: String,
     ): AdLoadResult = when (placement) {
-        is InterstitialPlacement -> {
-            val entry = interstitials.getOrPut(adUnitId) {
-                MetaInterstitialEntry(requireNotNull(application), adUnitId)
-            }
-            entry.load()
-        }
+        is InterstitialPlacement -> interstitials.getOrPut(adUnitId) {
+            MetaInterstitialEntry(requireNotNull(application), adUnitId)
+        }.load()
 
-        is RewardedPlacement -> {
-            val entry = rewardedVideos.getOrPut(adUnitId) {
-                MetaRewardedEntry(requireNotNull(application), adUnitId)
-            }
-            entry.load()
-        }
+        is RewardedPlacement -> rewardedVideos.getOrPut(adUnitId) {
+            MetaRewardedEntry(requireNotNull(application), adUnitId)
+        }.load()
     }
 
     override suspend fun showFullscreen(
@@ -156,18 +150,12 @@ private class MetaNativeController(
         headlineView.text = nativeAd.advertiserName
         bodyView.text = nativeAd.adBodyText.orEmpty()
         callToActionView.text = nativeAd.adCallToAction.orEmpty()
-        nativeAd.registerViewForInteraction(
-            nativeAdLayout,
-            mediaView,
-            listOf(callToActionView),
-        )
+        nativeAd.registerViewForInteraction(nativeAdLayout, mediaView, listOf(callToActionView))
         mutableState.value = AdViewState.Loaded
     }
 
     override fun onError(ad: Ad?, adError: AdError) {
-        mutableState.value = AdViewState.Failed(
-            AdsError(network = AdsNetwork.META, message = adError.errorMessage),
-        )
+        mutableState.value = AdViewState.Failed(AdsError(network = AdsNetwork.META, message = adError.errorMessage))
     }
 
     override fun onAdClicked(ad: Ad) = Unit
@@ -184,7 +172,7 @@ private class MetaNativeController(
 
 private class MetaInterstitialEntry(
     context: Context,
-    private val adUnitId: String,
+    adUnitId: String,
 ) : InterstitialAdListener {
     private val ad = InterstitialAd(context, adUnitId)
     private var loadContinuation: CancellableContinuation<AdLoadResult>? = null
@@ -211,13 +199,7 @@ private class MetaInterstitialEntry(
         loadContinuation = null
     }
 
-    override fun onError(ad: Ad?, adError: AdError) {
-        val failure = error(adError.errorMessage)
-        loadContinuation?.takeIf { it.isActive }?.resume(AdLoadResult.Failed(failure))
-        loadContinuation = null
-        showContinuation?.takeIf { it.isActive }?.resume(AdShowResult.Failed(failure))
-        showContinuation = null
-    }
+    override fun onError(ad: Ad?, adError: AdError) = fail(adError.errorMessage)
 
     override fun onInterstitialDisplayed(ad: Ad) = Unit
 
@@ -231,12 +213,20 @@ private class MetaInterstitialEntry(
 
     override fun onLoggingImpression(ad: Ad) = Unit
 
+    private fun fail(message: String) {
+        val failure = error(message)
+        loadContinuation?.takeIf { it.isActive }?.resume(AdLoadResult.Failed(failure))
+        loadContinuation = null
+        showContinuation?.takeIf { it.isActive }?.resume(AdShowResult.Failed(failure))
+        showContinuation = null
+    }
+
     private fun error(message: String): AdsError = AdsError(network = AdsNetwork.META, message = message)
 }
 
 private class MetaRewardedEntry(
     context: Context,
-    private val adUnitId: String,
+    adUnitId: String,
 ) : RewardedVideoAdListener {
     private val ad = RewardedVideoAd(context, adUnitId)
     private var loadContinuation: CancellableContinuation<AdLoadResult>? = null
@@ -266,14 +256,7 @@ private class MetaRewardedEntry(
         loadContinuation = null
     }
 
-    override fun onError(ad: Ad?, adError: AdError) {
-        val failure = error(adError.errorMessage)
-        loadContinuation?.takeIf { it.isActive }?.resume(AdLoadResult.Failed(failure))
-        loadContinuation = null
-        showContinuation?.takeIf { it.isActive }?.resume(AdShowResult.Failed(failure))
-        showContinuation = null
-        rewardHandler = null
-    }
+    override fun onError(ad: Ad?, adError: AdError) = fail(adError.errorMessage)
 
     override fun onRewardedVideoCompleted() {
         rewardHandler?.invoke(AdReward())
@@ -290,6 +273,15 @@ private class MetaRewardedEntry(
 
     override fun onLoggingImpression(ad: Ad) = Unit
 
+    private fun fail(message: String) {
+        val failure = error(message)
+        loadContinuation?.takeIf { it.isActive }?.resume(AdLoadResult.Failed(failure))
+        loadContinuation = null
+        showContinuation?.takeIf { it.isActive }?.resume(AdShowResult.Failed(failure))
+        showContinuation = null
+        rewardHandler = null
+    }
+
     private fun error(message: String): AdsError = AdsError(network = AdsNetwork.META, message = message)
 }
 
@@ -299,19 +291,17 @@ private class MetaBannerController(
 ) : BannerAdController {
     private val mutableState = MutableStateFlow<AdViewState>(AdViewState.Idle)
     private val listener = object : AdListener {
-            override fun onError(ad: Ad?, adError: AdError) {
-                mutableState.value = AdViewState.Failed(
-                    AdsError(network = AdsNetwork.META, message = adError.errorMessage),
-                )
-            }
+        override fun onError(ad: Ad?, adError: AdError) {
+            mutableState.value = AdViewState.Failed(AdsError(network = AdsNetwork.META, message = adError.errorMessage))
+        }
 
-            override fun onAdLoaded(ad: Ad) {
-                mutableState.value = AdViewState.Loaded
-            }
+        override fun onAdLoaded(ad: Ad) {
+            mutableState.value = AdViewState.Loaded
+        }
 
-            override fun onAdClicked(ad: Ad) = Unit
+        override fun onAdClicked(ad: Ad) = Unit
 
-            override fun onLoggingImpression(ad: Ad) = Unit
+        override fun onLoggingImpression(ad: Ad) = Unit
     }
     private val adView = AdView(context, adUnitId, AdSize.BANNER_HEIGHT_50)
 

@@ -65,6 +65,7 @@ object MonetizeKit {
     private val mutableEvents = MutableSharedFlow<AdsEvent>(extraBufferCapacity = 32)
     private val mutableGdprConsent = MutableStateFlow<GdprConsentState>(GdprConsentState.NotRequested)
     private val consentMutex = Mutex()
+    private val fullscreenShowMutex = Mutex()
 
     private var container: KoinApplication? = null
     private var initializationJob: Job? = null
@@ -112,7 +113,7 @@ object MonetizeKit {
             val runtime = AdsRuntime(
                 configuration = configuration,
                 adapters = adapters,
-                consentManager = GdprConsentManager(application),
+                consentManager = GdprConsentManager(application, configuration.gdpr),
             )
 
             container = koinApplication {
@@ -181,13 +182,17 @@ object MonetizeKit {
     suspend fun show(
         activity: Activity,
         placement: InterstitialPlacement,
-    ): AdShowResult = showInternal(activity, placement) {}
+    ): AdShowResult = fullscreenShowMutex.withLock {
+        showInternal(activity, placement) {}
+    }
 
     suspend fun show(
         activity: Activity,
         placement: RewardedPlacement,
         onReward: (AdReward) -> Unit,
-    ): AdShowResult = showInternal(activity, placement, onReward)
+    ): AdShowResult = fullscreenShowMutex.withLock {
+        showInternal(activity, placement, onReward)
+    }
 
     /**
      * Creates a traditional Android View container for use by Views or the ads-compose module.
@@ -212,7 +217,7 @@ object MonetizeKit {
             slot.setError(AdsError(message = "Banner placement '${placement.id}' is not configured."))
             return slot
         }
-        val attempts = definition.waterfall.mapNotNull { candidate ->
+        val attempts = definition.candidates.mapNotNull { candidate ->
             runtime.adapters[candidate.network]?.takeIf { AdFormat.BANNER in it.supportedFormats }?.let { adapter ->
                 BannerAttempt(adapter = adapter, placement = placement, adUnitId = candidate.adUnitId)
             }
@@ -225,7 +230,7 @@ object MonetizeKit {
         return slot
     }
 
-    /** Creates a waterfall-aware host for a configured native placement. */
+    /** Creates an ordered-fallback host for a configured native placement. */
     fun createNativeSlot(
         context: Context,
         placement: NativePlacement,
@@ -245,7 +250,7 @@ object MonetizeKit {
             slot.setError(AdsError(message = "Native placement '${placement.id}' is not configured."))
             return slot
         }
-        val attempts = definition.waterfall.mapNotNull { candidate ->
+        val attempts = definition.candidates.mapNotNull { candidate ->
             runtime.adapters[candidate.network]?.takeIf { AdFormat.NATIVE in it.supportedFormats }?.let { adapter ->
                 NativeAttempt(adapter = adapter, placement = placement, adUnitId = candidate.adUnitId)
             }
@@ -362,7 +367,7 @@ object MonetizeKit {
         }
 
         var lastError = AdsError(message = "No configured network could show '${placement.id}'.")
-        definition.waterfall.forEach { candidate ->
+        definition.candidates.forEach { candidate ->
             val adapter = runtime.adapters[candidate.network] ?: return@forEach
             if (candidate.network !in runtime.readyNetworks) return@forEach
             if (placement.format !in adapter.supportedFormats) {

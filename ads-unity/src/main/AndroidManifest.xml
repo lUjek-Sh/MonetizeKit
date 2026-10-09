@@ -5,7 +5,7 @@
     <application>
         <provider
             android:name=".UnityAdapterInitializer"
-            android:authorities="${applicationId}.adskit.unity-initializer"
+            android:authorities="${applicationId}.monetizekit.unity-initializer"
             android:exported="false"
             android:initOrder="100" />
     </application>

@@ -26,7 +26,7 @@ internal data class NativeAttempt(
     val adUnitId: String,
 )
 
-/** A waterfall-aware Android View host. Prefer AdsBanner from the ads-compose module in Compose UI. */
+/** An Android View host with ordered fallback. Prefer AdsBanner from ads-compose in Compose UI. */
 class AdsBannerSlot(
     context: Context,
     private val reservedHeightDp: Int,
@@ -120,7 +120,7 @@ class AdsBannerSlot(
         get() = (reservedHeightDp * resources.displayMetrics.density).toInt()
 }
 
-/** A waterfall-aware Android View host for native placements. */
+/** An Android View host with ordered fallback for native placements. */
 class AdsNativeSlot(
     context: Context,
     private val reservedHeightDp: Int,

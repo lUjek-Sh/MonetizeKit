@@ -6,7 +6,9 @@ koin = "4.1.1"
 kotlin = "2.4.21"
 googleMobileAds = "25.4.0"
 metaAudienceNetwork = "6.22.0"
-unityAds = "4.7.0"
+unityAds = "4.20.0"
+metaMediationAdapter = "6.22.0.1"
+unityMediationAdapter = "4.20.0.1"
 ump = "4.0.0"
 coreKtx = "1.19.1"
 junit = "4.13.2"
@@ -32,6 +34,8 @@ androidx-compose-runtime = { group = "androidx.compose.runtime", name = "runtime
 google-mobile-ads = { group = "com.google.android.gms", name = "play-services-ads", version.ref = "googleMobileAds" }
 meta-audience-network = { group = "com.facebook.android", name = "audience-network-sdk", version.ref = "metaAudienceNetwork" }
 unity-ads = { group = "com.unity3d.ads", name = "unity-ads", version.ref = "unityAds" }
+google-ads-mediation-meta = { group = "com.google.ads.mediation", name = "facebook", version.ref = "metaMediationAdapter" }
+google-ads-mediation-unity = { group = "com.google.ads.mediation", name = "unity", version.ref = "unityMediationAdapter" }
 google-ump = { group = "com.google.android.ump", name = "user-messaging-platform", version.ref = "ump" }
 
 [plugins]

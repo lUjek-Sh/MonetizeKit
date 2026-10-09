@@ -14,3 +14,5 @@ local.properties
 /ads-compose/build
 /ads-meta/build
 /ads-unity/build
+/ads-admob-meta-mediation/build
+/ads-admob-unity-mediation/build

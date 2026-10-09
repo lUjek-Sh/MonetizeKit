@@ -5,7 +5,7 @@
     <application>
         <provider
             android:name=".MetaAdapterInitializer"
-            android:authorities="${applicationId}.adskit.meta-initializer"
+            android:authorities="${applicationId}.monetizekit.meta-initializer"
             android:exported="false"
             android:initOrder="100" />
     </application>

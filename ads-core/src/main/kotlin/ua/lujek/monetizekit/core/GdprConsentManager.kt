@@ -2,6 +2,7 @@ package ua.lujek.monetizekit.core
 
 import android.app.Activity
 import android.content.Context
+import com.google.android.ump.ConsentDebugSettings
 import com.google.android.ump.ConsentInformation
 import com.google.android.ump.ConsentRequestParameters
 import com.google.android.ump.FormError
@@ -22,14 +23,18 @@ sealed interface GdprConsentState {
 }
 
 /** Google UMP-backed GDPR consent gathering. A valid UMP message must be configured in AdMob. */
-internal class GdprConsentManager(context: Context) {
+internal class GdprConsentManager(
+    context: Context,
+    private val configuration: GdprConfiguration,
+) {
+    private val applicationContext = context.applicationContext
     private val consentInformation = UserMessagingPlatform.getConsentInformation(context)
 
     suspend fun gather(activity: Activity): ConsentSnapshot {
         val updateError = suspendCancellableCoroutine<FormError?> { continuation ->
             consentInformation.requestConsentInfoUpdate(
                 activity,
-                ConsentRequestParameters.Builder().build(),
+                consentRequestParameters(),
                 { if (continuation.isActive) continuation.resume(null) },
                 { error -> if (continuation.isActive) continuation.resume(error) },
             )
@@ -62,4 +67,23 @@ internal class GdprConsentManager(context: Context) {
             ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED,
         error = formError?.let { error -> AdsError(message = error.message) },
     )
+
+    private fun consentRequestParameters(): ConsentRequestParameters =
+        ConsentRequestParameters.Builder().apply {
+            configuration.debug?.let { debug ->
+                setConsentDebugSettings(
+                    ConsentDebugSettings.Builder(applicationContext)
+                        .apply {
+                            debug.deviceHashedIds.forEach(::addTestDeviceHashedId)
+                            setDebugGeography(debug.geography.toUmpDebugGeography())
+                        }
+                        .build(),
+                )
+            }
+        }.build()
+}
+
+private fun GdprDebugGeography.toUmpDebugGeography(): Int = when (this) {
+    GdprDebugGeography.DISABLED -> ConsentDebugSettings.DebugGeography.DEBUG_GEOGRAPHY_DISABLED
+    GdprDebugGeography.EEA -> ConsentDebugSettings.DebugGeography.DEBUG_GEOGRAPHY_EEA
 }

@@ -5,7 +5,7 @@
     <application>
         <provider
             android:name=".AdMobAdapterInitializer"
-            android:authorities="${applicationId}.adskit.admob-initializer"
+            android:authorities="${applicationId}.monetizekit.admob-initializer"
             android:exported="false"
             android:initOrder="100" />
     </application>
