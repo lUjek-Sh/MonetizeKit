@@ -12,3 +12,5 @@ local.properties
 /ads-core/build
 /ads-meta/build
 /ads-unity/build
+/.kotlin
+/ads-compose/build
