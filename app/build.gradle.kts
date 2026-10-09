@@ -3,13 +3,13 @@ plugins {
 }
 
 android {
-    namespace = "ua.lujek.adsandbilling"
+    namespace = "ua.lujek.monetizekit.sample"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "ua.lujek.adsandbilling"
+        applicationId = "ua.lujek.monetizekit.sample"
         minSdk = 24
         targetSdk = 37
         versionCode = 1

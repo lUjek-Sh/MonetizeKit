@@ -22,5 +22,10 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AdsAndBilling"
+rootProject.name = "MonetizeKit"
 include(":app")
+include(":ads-core")
+include(":ads-admob")
+include(":ads-meta")
+include(":ads-unity")
+include(":ads-compose")

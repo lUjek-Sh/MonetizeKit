@@ -1,4 +1,4 @@
-package ua.lujek.adsandbilling
+package ua.lujek.monetizekit.sample
 
 import org.junit.Test
 
