@@ -1,7 +1,8 @@
 *.iml
 .gradle
 /local.properties
-/.idea/
+/.idea
+/.kotlin
 .DS_Store
 /build
 /captures
@@ -10,7 +11,6 @@
 local.properties
 /ads-admob/build
 /ads-core/build
+/ads-compose/build
 /ads-meta/build
 /ads-unity/build
-/.kotlin
-/ads-compose/build
