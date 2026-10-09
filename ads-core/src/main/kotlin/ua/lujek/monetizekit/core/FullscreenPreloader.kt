@@ -25,6 +25,7 @@ internal suspend fun preloadFirstFullscreenCandidate(
     candidates: List<NetworkPlacement>,
     adapters: Map<AdsNetwork, AdsNetworkAdapter>,
     readyNetworks: Set<AdsNetwork>,
+    eventReporter: AdsEventReporter,
 ): FullscreenPreloadResult {
     var lastError = AdsError(message = "No configured network could load '${placement.id}'.")
 
@@ -41,7 +42,7 @@ internal suspend fun preloadFirstFullscreenCandidate(
 
         when (
             val loadResult = runCatching {
-                adapter.loadFullscreen(placement, candidate.adUnitId)
+                adapter.loadFullscreen(placement, candidate.adUnitId, eventReporter)
             }.getOrElse { throwable ->
                 AdLoadResult.Failed(
                     AdsError(

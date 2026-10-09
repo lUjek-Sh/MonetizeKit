@@ -25,5 +25,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.koin.core)
     implementation(libs.google.ump)
+    implementation(libs.androidx.lifecycle.runtime)
     testImplementation(libs.junit)
 }

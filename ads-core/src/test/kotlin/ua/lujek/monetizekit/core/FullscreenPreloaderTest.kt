@@ -31,6 +31,7 @@ class FullscreenPreloaderTest {
                 AdsNetwork.UNITY to unity,
             ),
             readyNetworks = setOf(AdsNetwork.META, AdsNetwork.ADMOB, AdsNetwork.UNITY),
+            eventReporter = AdsEventReporter { },
         )
 
         assertTrue(result is FullscreenPreloadResult.Loaded)
@@ -52,6 +53,7 @@ class FullscreenPreloaderTest {
             ),
             adapters = mapOf(AdsNetwork.META to meta, AdsNetwork.ADMOB to adMob),
             readyNetworks = setOf(AdsNetwork.ADMOB),
+            eventReporter = AdsEventReporter { },
         )
 
         assertTrue(result is FullscreenPreloadResult.Loaded)
@@ -81,6 +83,7 @@ private class FakeAdapter(
     override suspend fun loadFullscreen(
         placement: FullscreenPlacement,
         adUnitId: String,
+        eventReporter: AdsEventReporter,
     ): AdLoadResult {
         calls += adUnitId
         return result
@@ -91,18 +94,21 @@ private class FakeAdapter(
         placement: FullscreenPlacement,
         adUnitId: String,
         onReward: (AdReward) -> Unit,
+        eventReporter: AdsEventReporter,
     ): AdShowResult = error("Not used by preload tests")
 
     override fun createBannerController(
         context: Context,
         placement: BannerPlacement,
         adUnitId: String,
+        eventReporter: AdsEventReporter,
     ): BannerAdController? = null
 
     override fun createNativeController(
         context: Context,
         placement: NativePlacement,
         adUnitId: String,
+        eventReporter: AdsEventReporter,
     ): NativeAdController? = null
 
     override fun clearFullscreenCache() = Unit

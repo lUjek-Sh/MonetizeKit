@@ -43,6 +43,20 @@ data class UnityConfiguration internal constructor(
 enum class GdprDebugGeography {
     DISABLED,
     EEA,
+    REGULATED_US_STATE,
+    OTHER,
+}
+
+/** How the Google Mobile Ads SDK should receive a United States privacy signal. */
+enum class UsStatePrivacyMode {
+    /** The app or its consent provider does not set a US-specific signal through MonetizeKit. */
+    NONE,
+
+    /** Enables Google restricted data processing by writing the documented `gad_rdp` signal. */
+    RESTRICTED_DATA_PROCESSING,
+
+    /** A UMP or external CMP writes IAB GPP values before ad SDK initialization. */
+    GLOBAL_PRIVACY_PLATFORM,
 }
 
 @ConsistentCopyVisibility
@@ -54,6 +68,10 @@ data class GdprDebugConfiguration internal constructor(
 @ConsistentCopyVisibility
 data class GdprConfiguration internal constructor(
     val debug: GdprDebugConfiguration?,
+    val childDirectedTreatment: Boolean?,
+    val underAgeOfConsent: Boolean?,
+    val usStatePrivacyMode: UsStatePrivacyMode,
+    val externalConsentProvider: PrivacyConsentProvider?,
 )
 
 @ConsistentCopyVisibility
@@ -94,7 +112,13 @@ class AdsConfigurationBuilder {
     private var adMobConfiguration: AdMobConfiguration? = null
     private var metaConfiguration: MetaConfiguration? = null
     private var unityConfiguration: UnityConfiguration? = null
-    private var gdprConfiguration: GdprConfiguration = GdprConfiguration(debug = null)
+    private var gdprConfiguration: GdprConfiguration = GdprConfiguration(
+        debug = null,
+        childDirectedTreatment = null,
+        underAgeOfConsent = null,
+        usStatePrivacyMode = UsStatePrivacyMode.NONE,
+        externalConsentProvider = null,
+    )
     private var adsAccessProvider: AdsAccessProvider = AdsAccessProviders.alwaysAllowed
     private var isGdprConfigured = false
     private var isAdsAccessConfigured = false
@@ -130,6 +154,12 @@ class AdsConfigurationBuilder {
         isGdprConfigured = true
         gdprConfiguration = GdprConfigurationBuilder().apply(block).build()
     }
+
+    /**
+     * Alias for [gdpr]. It configures every privacy option, including COPPA, TFUA, and US states
+     * signals; it does not create a second consent dialog.
+     */
+    fun privacy(block: GdprConfigurationBuilder.() -> Unit) = gdpr(block)
 
     /**
      * Observes whether ads may be requested. Use this only when an application has an ad-removal
@@ -336,6 +366,13 @@ class UnityConfigurationBuilder {
 @MonetizeKitDsl
 class GdprConfigurationBuilder {
     private var debugConfiguration: GdprDebugConfiguration? = null
+    private var childDirectedTreatment: Boolean? = null
+    private var underAgeOfConsent: Boolean? = null
+    private var usStatePrivacyMode: UsStatePrivacyMode = UsStatePrivacyMode.NONE
+    private var externalConsentProvider: PrivacyConsentProvider? = null
+    private var isAgeTreatmentConfigured = false
+    private var isUsStatePrivacyConfigured = false
+    private var isExternalConsentConfigured = false
 
     /**
      * Registers UMP debug parameters only when [enabled] is true. The UMP device hash is printed
@@ -350,7 +387,50 @@ class GdprConfigurationBuilder {
         debugConfiguration = GdprDebugSettingsBuilder().apply(block).build()
     }
 
-    internal fun build(): GdprConfiguration = GdprConfiguration(debug = debugConfiguration)
+    /**
+     * Sets the COPPA and TFUA flags for Google Mobile Ads. Leave a value null when the app must
+     * not make a declaration. TFUA is also passed to UMP so child users are not asked for consent.
+     */
+    fun ageRestrictedTreatment(
+        childDirected: Boolean? = null,
+        underAgeOfConsent: Boolean? = null,
+    ) {
+        check(!isAgeTreatmentConfigured) { "Age-restricted treatment is configured more than once." }
+        require(childDirected != null || underAgeOfConsent != null) {
+            "Provide childDirected and/or underAgeOfConsent when configuring age-restricted treatment."
+        }
+        isAgeTreatmentConfigured = true
+        childDirectedTreatment = childDirected
+        this.underAgeOfConsent = underAgeOfConsent
+    }
+
+    /**
+     * Selects the US privacy transport. For [UsStatePrivacyMode.GLOBAL_PRIVACY_PLATFORM], UMP or
+     * the supplied external provider must write GPP consent values before ads initialize.
+     */
+    fun usStatePrivacy(mode: UsStatePrivacyMode) {
+        check(!isUsStatePrivacyConfigured) { "US state privacy is configured more than once." }
+        isUsStatePrivacyConfigured = true
+        usStatePrivacyMode = mode
+    }
+
+    /**
+     * Replaces UMP's form with one application-owned certified CMP. The provider must persist any
+     * TCF/GPP values required by enabled direct networks before returning a requestable snapshot.
+     */
+    fun externalConsent(provider: PrivacyConsentProvider) {
+        check(!isExternalConsentConfigured) { "An external consent provider is configured more than once." }
+        isExternalConsentConfigured = true
+        externalConsentProvider = provider
+    }
+
+    internal fun build(): GdprConfiguration = GdprConfiguration(
+        debug = debugConfiguration,
+        childDirectedTreatment = childDirectedTreatment,
+        underAgeOfConsent = underAgeOfConsent,
+        usStatePrivacyMode = usStatePrivacyMode,
+        externalConsentProvider = externalConsentProvider,
+    )
 }
 
 @MonetizeKitDsl

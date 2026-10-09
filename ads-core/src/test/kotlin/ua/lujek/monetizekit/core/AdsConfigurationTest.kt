@@ -119,4 +119,69 @@ class AdsConfigurationTest {
         assertEquals(AdsAccess.Suppressed, configuration.adsAccessProvider.access.value)
         assertEquals(AdsAccess.Allowed, AdsAccessProviders.alwaysAllowed.access.value)
     }
+
+    @Test
+    fun `privacy configuration keeps age and US settings with one external consent provider`() {
+        val externalProvider = TestConsentProvider()
+        val fallbackUmpProvider = TestConsentProvider()
+
+        val configuration = monetizeConfiguration {
+            privacy {
+                ageRestrictedTreatment(
+                    childDirected = true,
+                    underAgeOfConsent = true,
+                )
+                usStatePrivacy(UsStatePrivacyMode.GLOBAL_PRIVACY_PLATFORM)
+                externalConsent(externalProvider)
+            }
+            direct {
+                meta()
+            }
+            interstitial(levelComplete) {
+                meta("META_INTERSTITIAL")
+            }
+        }
+
+        assertEquals(true, configuration.gdpr.childDirectedTreatment)
+        assertEquals(true, configuration.gdpr.underAgeOfConsent)
+        assertEquals(UsStatePrivacyMode.GLOBAL_PRIVACY_PLATFORM, configuration.gdpr.usStatePrivacyMode)
+        assertSame(externalProvider, selectPrivacyConsentProvider(configuration.gdpr, fallbackUmpProvider))
+    }
+
+    @Test
+    fun `banner placement keeps adaptive and collapsible presentation requirements`() {
+        val anchored = AdsPlacements.banner(
+            id = "anchored_banner",
+            reservedHeightDp = 90,
+            size = BannerSize.AnchoredAdaptive,
+            collapsibleAnchor = CollapsibleBannerAnchor.BOTTOM,
+        )
+        val inline = AdsPlacements.banner(
+            id = "inline_banner",
+            reservedHeightDp = 250,
+            size = BannerSize.InlineAdaptive(maxHeightDp = 250),
+        )
+
+        assertEquals(BannerSize.AnchoredAdaptive, anchored.size)
+        assertEquals(CollapsibleBannerAnchor.BOTTOM, anchored.collapsibleAnchor)
+        assertEquals(BannerSize.InlineAdaptive(maxHeightDp = 250), inline.size)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `inline adaptive banners cannot be collapsible`() {
+        AdsPlacements.banner(
+            id = "invalid_banner",
+            reservedHeightDp = 250,
+            size = BannerSize.InlineAdaptive(maxHeightDp = 250),
+            collapsibleAnchor = CollapsibleBannerAnchor.TOP,
+        )
+    }
+
+    private class TestConsentProvider : PrivacyConsentProvider {
+        override suspend fun gatherConsent(activity: android.app.Activity): ConsentSnapshot =
+            error("Not used in configuration tests.")
+
+        override suspend fun showPrivacyOptions(activity: android.app.Activity): ConsentSnapshot =
+            error("Not used in configuration tests.")
+    }
 }

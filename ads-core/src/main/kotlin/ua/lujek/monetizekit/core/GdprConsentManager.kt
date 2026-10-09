@@ -22,15 +22,34 @@ sealed interface GdprConsentState {
     data class Resolved(val snapshot: ConsentSnapshot) : GdprConsentState
 }
 
-/** Google UMP-backed GDPR consent gathering. A valid UMP message must be configured in AdMob. */
+/** Selects exactly one consent source: an application CMP or the default UMP provider. */
+internal fun selectPrivacyConsentProvider(
+    configuration: GdprConfiguration,
+    umpProvider: PrivacyConsentProvider,
+): PrivacyConsentProvider = configuration.externalConsentProvider ?: umpProvider
+
+/** Google UMP-backed consent gathering. A valid UMP message must be configured in AdMob. */
 internal class GdprConsentManager(
     context: Context,
-    private val configuration: GdprConfiguration,
+    configuration: GdprConfiguration,
+    umpProvider: PrivacyConsentProvider = UmpPrivacyConsentProvider(context, configuration),
 ) {
+    private val consentProvider = selectPrivacyConsentProvider(configuration, umpProvider)
+
+    suspend fun gather(activity: Activity): ConsentSnapshot = consentProvider.gatherConsent(activity)
+
+    suspend fun showPrivacyOptions(activity: Activity): ConsentSnapshot =
+        consentProvider.showPrivacyOptions(activity)
+}
+
+private class UmpPrivacyConsentProvider(
+    context: Context,
+    private val configuration: GdprConfiguration,
+) : PrivacyConsentProvider {
     private val applicationContext = context.applicationContext
     private val consentInformation = UserMessagingPlatform.getConsentInformation(context)
 
-    suspend fun gather(activity: Activity): ConsentSnapshot {
+    override suspend fun gatherConsent(activity: Activity): ConsentSnapshot {
         val updateError = suspendCancellableCoroutine<FormError?> { continuation ->
             consentInformation.requestConsentInfoUpdate(
                 activity,
@@ -52,7 +71,7 @@ internal class GdprConsentManager(
         return consentSnapshot(updateError ?: formError)
     }
 
-    suspend fun showPrivacyOptions(activity: Activity): ConsentSnapshot {
+    override suspend fun showPrivacyOptions(activity: Activity): ConsentSnapshot {
         val formError = suspendCancellableCoroutine<FormError?> { continuation ->
             UserMessagingPlatform.showPrivacyOptionsForm(activity) { error ->
                 if (continuation.isActive) continuation.resume(error)
@@ -70,6 +89,7 @@ internal class GdprConsentManager(
 
     private fun consentRequestParameters(): ConsentRequestParameters =
         ConsentRequestParameters.Builder().apply {
+            configuration.underAgeOfConsent?.let(::setTagForUnderAgeOfConsent)
             configuration.debug?.let { debug ->
                 setConsentDebugSettings(
                     ConsentDebugSettings.Builder(applicationContext)
@@ -86,4 +106,9 @@ internal class GdprConsentManager(
 private fun GdprDebugGeography.toUmpDebugGeography(): Int = when (this) {
     GdprDebugGeography.DISABLED -> ConsentDebugSettings.DebugGeography.DEBUG_GEOGRAPHY_DISABLED
     GdprDebugGeography.EEA -> ConsentDebugSettings.DebugGeography.DEBUG_GEOGRAPHY_EEA
+    GdprDebugGeography.REGULATED_US_STATE -> {
+        ConsentDebugSettings.DebugGeography.DEBUG_GEOGRAPHY_REGULATED_US_STATE
+    }
+
+    GdprDebugGeography.OTHER -> ConsentDebugSettings.DebugGeography.DEBUG_GEOGRAPHY_OTHER
 }

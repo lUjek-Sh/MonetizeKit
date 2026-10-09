@@ -260,7 +260,7 @@ class GooglePlayBilling(
                         mutablePurchaseEvents.emit(BillingPurchaseEvent.Failed(failure))
                         return@forEach
                     }
-                    mutablePurchaseEvents.emit(BillingPurchaseEvent.Processed(normalizedPurchase))
+                    mutablePurchaseEvents.emit(BillingPurchaseEvent.Reconciled(normalizedPurchase))
                 }
 
                 is PurchaseVerification.Rejected -> {

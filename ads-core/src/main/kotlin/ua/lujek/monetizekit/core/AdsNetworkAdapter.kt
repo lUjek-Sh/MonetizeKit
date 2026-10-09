@@ -18,6 +18,7 @@ interface AdsNetworkAdapter {
     suspend fun loadFullscreen(
         placement: FullscreenPlacement,
         adUnitId: String,
+        eventReporter: AdsEventReporter,
     ): AdLoadResult
 
     suspend fun showFullscreen(
@@ -25,18 +26,21 @@ interface AdsNetworkAdapter {
         placement: FullscreenPlacement,
         adUnitId: String,
         onReward: (AdReward) -> Unit,
+        eventReporter: AdsEventReporter,
     ): AdShowResult
 
     fun createBannerController(
         context: Context,
         placement: BannerPlacement,
         adUnitId: String,
+        eventReporter: AdsEventReporter,
     ): BannerAdController?
 
     fun createNativeController(
         context: Context,
         placement: NativePlacement,
         adUnitId: String,
+        eventReporter: AdsEventReporter,
     ): NativeAdController?
 
     /** Removes a not-yet-shown fullscreen creative after ad access has been revoked. */
@@ -52,6 +56,12 @@ interface ViewAdController {
     val state: StateFlow<AdViewState>
 
     fun load()
+
+    /** Propagates the host lifecycle pause to SDK views that need it. */
+    fun onPause() = Unit
+
+    /** Propagates the host lifecycle resume to SDK views that need it. */
+    fun onResume() = Unit
 
     fun destroy()
 }
@@ -89,6 +99,8 @@ sealed interface AdShowResult {
 data class AdsError(
     val network: AdsNetwork? = null,
     val message: String,
+    val code: String? = null,
+    val diagnostics: AdDiagnostics? = null,
     val cause: Throwable? = null,
 )
 
@@ -96,3 +108,29 @@ data class AdReward(
     val amount: Int? = null,
     val type: String? = null,
 )
+
+/** Safe response metadata for logging and diagnostics. It intentionally excludes creative data. */
+data class AdDiagnostics(
+    val responseId: String? = null,
+    val mediationAdapterClassName: String? = null,
+    val adSourceName: String? = null,
+    val adSourceInstanceName: String? = null,
+)
+
+data class AdRevenue(
+    val valueMicros: Long,
+    val currencyCode: String,
+    val precision: AdRevenuePrecision,
+)
+
+enum class AdRevenuePrecision {
+    UNKNOWN,
+    ESTIMATED,
+    PUBLISHER_PROVIDED,
+    PRECISE,
+}
+
+/** Receives normalized events from direct network adapters. */
+fun interface AdsEventReporter {
+    fun report(event: AdsEvent)
+}

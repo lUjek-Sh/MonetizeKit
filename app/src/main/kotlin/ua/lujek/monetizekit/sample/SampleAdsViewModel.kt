@@ -144,6 +144,16 @@ private fun AdsEvent.label(): String = when (this) {
     is AdsEvent.AdShown -> "${placement.id} shown by $network"
     is AdsEvent.AdShowFailed -> "${placement.id} show failed: ${error.message}"
     is AdsEvent.AdsAccessChanged -> "Ads access changed to $access"
+    is AdsEvent.AdLoaded -> "${placement.id} loaded by $network"
+    is AdsEvent.AdLoadFailed -> "${placement.id} load failed: ${error.message}"
+    is AdsEvent.AdImpression -> "${placement.id} impression by $network"
+    is AdsEvent.AdClicked -> "${placement.id} clicked in $network"
+    is AdsEvent.AdRewardEarned -> {
+        "${placement.id} reward from $network: ${reward.amount ?: 1} ${reward.type.orEmpty()}"
+    }
+    is AdsEvent.AdPaid -> {
+        "${placement.id} revenue: ${revenue.valueMicros} ${revenue.currencyCode} by $network"
+    }
 }
 
 private fun AdLoadResult.label(): String = when (this) {

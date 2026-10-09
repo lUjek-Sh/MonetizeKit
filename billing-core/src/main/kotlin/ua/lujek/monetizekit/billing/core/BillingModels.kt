@@ -170,8 +170,14 @@ sealed interface BillingPurchaseEvent {
         val productIds: Set<BillingProductId>,
     ) : BillingPurchaseEvent
 
-    /** A verified purchase has been finalized with Google Play. */
-    data class Processed(
+    /**
+     * A verified purchase was reconciled and finalized with Google Play.
+     *
+     * This is not an exactly-once delivery callback: it can be emitted again when [BillingStore]
+     * refreshes an already-owned non-consumable or subscription. Grant one-time content only in
+     * the verifier/backend, where the purchase token is deduplicated.
+     */
+    data class Reconciled(
         val purchase: BillingPurchase,
     ) : BillingPurchaseEvent
 

@@ -4,6 +4,10 @@ import android.content.Context
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.FrameLayout
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.findViewTreeLifecycleOwner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,18 +31,38 @@ internal data class NativeAttempt(
     val adUnitId: String,
 )
 
-/** An Android View host with ordered fallback. Prefer AdsBanner from ads-compose in Compose UI. */
+/**
+ * An Android View host with ordered fallback. It may be created before consent and network
+ * initialization finish; calling [load] then waits for a ready SDK instead of permanently failing.
+ * Prefer AdsBanner from ads-compose in Compose UI.
+ */
 class AdsBannerSlot(
     context: Context,
     private val reservedHeightDp: Int,
 ) : FrameLayout(context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableState = MutableStateFlow<AdViewState>(AdViewState.Idle)
+    private var candidateProvider: (() -> List<BannerAttempt>)? = null
     private var candidates: List<BannerAttempt> = emptyList()
     private var activeController: BannerAdController? = null
     private var observationJob: Job? = null
     private var released = false
+    private var waitingForSdk = false
     private var adsAllowed = MonetizeKit.adsAccess.value == AdsAccess.Allowed
+    private var lifecycleOwner: LifecycleOwner? = null
+    private val lifecycleObserver = object : DefaultLifecycleObserver {
+        override fun onResume(owner: LifecycleOwner) {
+            activeController?.onResume()
+        }
+
+        override fun onPause(owner: LifecycleOwner) {
+            activeController?.onPause()
+        }
+
+        override fun onDestroy(owner: LifecycleOwner) {
+            release()
+        }
+    }
 
     val state: StateFlow<AdViewState> = mutableState
 
@@ -57,23 +81,65 @@ class AdsBannerSlot(
                 }
             }
         }
+        scope.launch {
+            MonetizeKit.state.collect { kitState ->
+                when (kitState) {
+                    is MonetizeKitState.Ready -> {
+                        if (waitingForSdk && adsAllowed && !released) {
+                            waitingForSdk = false
+                            mutableState.value = AdViewState.Idle
+                            load()
+                        }
+                    }
+
+                    is MonetizeKitState.Failed -> failWhileWaitingForSdk(
+                        "No configured banner network could be initialized.",
+                    )
+
+                    MonetizeKitState.GdprConsentRequired -> failWhileWaitingForSdk(
+                        "Ads cannot be requested until privacy consent allows them.",
+                    )
+
+                    else -> Unit
+                }
+            }
+        }
     }
 
-    internal fun setCandidates(candidates: List<BannerAttempt>) {
+    internal fun setCandidateProvider(candidateProvider: () -> List<BannerAttempt>) {
         check(!released) { "This AdsBannerSlot has already been released." }
-        this.candidates = candidates
+        this.candidateProvider = candidateProvider
     }
 
     internal fun setError(error: AdsError) {
         mutableState.value = AdViewState.Failed(error)
     }
 
+    /**
+     * Binds the slot to an explicit lifecycle, for example a Fragment's viewLifecycleOwner.
+     * If omitted, the slot binds to the nearest ViewTreeLifecycleOwner after attachment.
+     */
+    fun bindTo(lifecycleOwner: LifecycleOwner) {
+        check(!released) { "This AdsBannerSlot has already been released." }
+        if (this.lifecycleOwner === lifecycleOwner) return
+        this.lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
+        this.lifecycleOwner = lifecycleOwner
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            activeController?.onResume()
+        }
+    }
+
     fun load() {
         if (!adsAllowed || released || mutableState.value is AdViewState.Loading || mutableState.value is AdViewState.Loaded) return
+        if (MonetizeKit.state.value !is MonetizeKitState.Ready) {
+            waitingForSdk = true
+            return
+        }
+        waitingForSdk = false
+        candidates = candidateProvider?.invoke().orEmpty()
         if (candidates.isEmpty()) {
-            if (mutableState.value !is AdViewState.Failed) {
-                setError(AdsError(message = "No banner network is available."))
-            }
+            setError(AdsError(message = "No initialized network can render this banner placement."))
             return
         }
         loadCandidate(index = 0)
@@ -83,10 +149,17 @@ class AdsBannerSlot(
         if (released) return
         released = true
         observationJob?.cancel()
+        lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
+        lifecycleOwner = null
         activeController?.destroy()
         activeController = null
         removeAllViews()
         scope.coroutineContext[Job]?.cancel()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (lifecycleOwner == null) findViewTreeLifecycleOwner()?.let(::bindTo)
     }
 
     override fun onDetachedFromWindow() {
@@ -102,7 +175,12 @@ class AdsBannerSlot(
         }
         val attempt = candidates[index]
         val controller = runCatching {
-            attempt.adapter.createBannerController(context, attempt.placement, attempt.adUnitId)
+            attempt.adapter.createBannerController(
+                context = context,
+                placement = attempt.placement,
+                adUnitId = attempt.adUnitId,
+                eventReporter = MonetizeKit.adapterEventReporter(),
+            )
         }.getOrNull()
         if (controller == null) {
             loadCandidate(index + 1)
@@ -118,7 +196,12 @@ class AdsBannerSlot(
         controller.load()
         observationJob = scope.launch {
             when (val result = controller.state.filter { it is AdViewState.Loaded || it is AdViewState.Failed }.first()) {
-                AdViewState.Loaded -> mutableState.value = AdViewState.Loaded
+                AdViewState.Loaded -> {
+                    mutableState.value = AdViewState.Loaded
+                    lifecycleOwner?.takeIf { it.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) }
+                        ?.let { controller.onResume() }
+                }
+
                 is AdViewState.Failed -> {
                     controller.destroy()
                     if (activeController === controller) activeController = null
@@ -147,20 +230,46 @@ class AdsBannerSlot(
         mutableState.value = AdViewState.Suppressed
         requestLayout()
     }
+
+    private fun failWhileWaitingForSdk(message: String) {
+        if (waitingForSdk && !released) {
+            waitingForSdk = false
+            setError(AdsError(message = message))
+        }
+    }
 }
 
-/** An Android View host with ordered fallback for native placements. */
+/**
+ * An Android View host with ordered fallback for native placements. It supports the same delayed
+ * creation and lifecycle behavior as [AdsBannerSlot].
+ */
 class AdsNativeSlot(
     context: Context,
     private val reservedHeightDp: Int,
 ) : FrameLayout(context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableState = MutableStateFlow<AdViewState>(AdViewState.Idle)
+    private var candidateProvider: (() -> List<NativeAttempt>)? = null
     private var candidates: List<NativeAttempt> = emptyList()
     private var activeController: NativeAdController? = null
     private var observationJob: Job? = null
     private var released = false
+    private var waitingForSdk = false
     private var adsAllowed = MonetizeKit.adsAccess.value == AdsAccess.Allowed
+    private var lifecycleOwner: LifecycleOwner? = null
+    private val lifecycleObserver = object : DefaultLifecycleObserver {
+        override fun onResume(owner: LifecycleOwner) {
+            activeController?.onResume()
+        }
+
+        override fun onPause(owner: LifecycleOwner) {
+            activeController?.onPause()
+        }
+
+        override fun onDestroy(owner: LifecycleOwner) {
+            release()
+        }
+    }
 
     val state: StateFlow<AdViewState> = mutableState
 
@@ -179,21 +288,62 @@ class AdsNativeSlot(
                 }
             }
         }
+        scope.launch {
+            MonetizeKit.state.collect { kitState ->
+                when (kitState) {
+                    is MonetizeKitState.Ready -> {
+                        if (waitingForSdk && adsAllowed && !released) {
+                            waitingForSdk = false
+                            mutableState.value = AdViewState.Idle
+                            load()
+                        }
+                    }
+
+                    is MonetizeKitState.Failed -> failWhileWaitingForSdk(
+                        "No configured native network could be initialized.",
+                    )
+
+                    MonetizeKitState.GdprConsentRequired -> failWhileWaitingForSdk(
+                        "Ads cannot be requested until privacy consent allows them.",
+                    )
+
+                    else -> Unit
+                }
+            }
+        }
     }
 
-    internal fun setCandidates(candidates: List<NativeAttempt>) {
+    internal fun setCandidateProvider(candidateProvider: () -> List<NativeAttempt>) {
         check(!released) { "This AdsNativeSlot has already been released." }
-        this.candidates = candidates
+        this.candidateProvider = candidateProvider
     }
 
     internal fun setError(error: AdsError) {
         mutableState.value = AdViewState.Failed(error)
     }
 
+    /** See [AdsBannerSlot.bindTo]. */
+    fun bindTo(lifecycleOwner: LifecycleOwner) {
+        check(!released) { "This AdsNativeSlot has already been released." }
+        if (this.lifecycleOwner === lifecycleOwner) return
+        this.lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
+        this.lifecycleOwner = lifecycleOwner
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            activeController?.onResume()
+        }
+    }
+
     fun load() {
         if (!adsAllowed || released || mutableState.value is AdViewState.Loading || mutableState.value is AdViewState.Loaded) return
+        if (MonetizeKit.state.value !is MonetizeKitState.Ready) {
+            waitingForSdk = true
+            return
+        }
+        waitingForSdk = false
+        candidates = candidateProvider?.invoke().orEmpty()
         if (candidates.isEmpty()) {
-            if (mutableState.value !is AdViewState.Failed) setError(AdsError(message = "No native network is available."))
+            setError(AdsError(message = "No initialized network can render this native placement."))
             return
         }
         loadCandidate(index = 0)
@@ -203,10 +353,17 @@ class AdsNativeSlot(
         if (released) return
         released = true
         observationJob?.cancel()
+        lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
+        lifecycleOwner = null
         activeController?.destroy()
         activeController = null
         removeAllViews()
         scope.coroutineContext[Job]?.cancel()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (lifecycleOwner == null) findViewTreeLifecycleOwner()?.let(::bindTo)
     }
 
     override fun onDetachedFromWindow() {
@@ -222,7 +379,12 @@ class AdsNativeSlot(
         }
         val attempt = candidates[index]
         val controller = runCatching {
-            attempt.adapter.createNativeController(context, attempt.placement, attempt.adUnitId)
+            attempt.adapter.createNativeController(
+                context = context,
+                placement = attempt.placement,
+                adUnitId = attempt.adUnitId,
+                eventReporter = MonetizeKit.adapterEventReporter(),
+            )
         }.getOrNull()
         if (controller == null) {
             loadCandidate(index + 1)
@@ -236,8 +398,13 @@ class AdsNativeSlot(
         mutableState.value = AdViewState.Loading
         controller.load()
         observationJob = scope.launch {
-            when (controller.state.filter { it is AdViewState.Loaded || it is AdViewState.Failed }.first()) {
-                AdViewState.Loaded -> mutableState.value = AdViewState.Loaded
+            when (val result = controller.state.filter { it is AdViewState.Loaded || it is AdViewState.Failed }.first()) {
+                AdViewState.Loaded -> {
+                    mutableState.value = AdViewState.Loaded
+                    lifecycleOwner?.takeIf { it.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) }
+                        ?.let { controller.onResume() }
+                }
+
                 is AdViewState.Failed -> {
                     controller.destroy()
                     if (activeController === controller) activeController = null
@@ -265,5 +432,12 @@ class AdsNativeSlot(
         removeAllViews()
         mutableState.value = AdViewState.Suppressed
         requestLayout()
+    }
+
+    private fun failWhileWaitingForSdk(message: String) {
+        if (waitingForSdk && !released) {
+            waitingForSdk = false
+            setError(AdsError(message = message))
+        }
     }
 }

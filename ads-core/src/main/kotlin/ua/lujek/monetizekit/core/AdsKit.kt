@@ -57,6 +57,26 @@ sealed interface AdsEvent {
     data class AdShown(val placement: AdPlacement, val network: AdsNetwork) : AdsEvent
     data class AdShowFailed(val placement: AdPlacement, val error: AdsError) : AdsEvent
     data class AdsAccessChanged(val access: AdsAccess) : AdsEvent
+    data class AdLoaded(
+        val placement: AdPlacement,
+        val network: AdsNetwork,
+        val diagnostics: AdDiagnostics? = null,
+    ) : AdsEvent
+
+    data class AdLoadFailed(val placement: AdPlacement, val error: AdsError) : AdsEvent
+    data class AdImpression(val placement: AdPlacement, val network: AdsNetwork) : AdsEvent
+    data class AdClicked(val placement: AdPlacement, val network: AdsNetwork) : AdsEvent
+    data class AdRewardEarned(
+        val placement: RewardedPlacement,
+        val network: AdsNetwork,
+        val reward: AdReward,
+    ) : AdsEvent
+
+    data class AdPaid(
+        val placement: AdPlacement,
+        val network: AdsNetwork,
+        val revenue: AdRevenue,
+    ) : AdsEvent
 }
 
 /**
@@ -72,14 +92,14 @@ object MonetizeKit {
     private val mutableGdprConsent = MutableStateFlow<GdprConsentState>(GdprConsentState.NotRequested)
     private val mutableAdsAccess = MutableStateFlow<AdsAccess>(AdsAccess.Allowed)
     private val consentMutex = Mutex()
-    private val fullscreenShowMutex = Mutex()
-    private val fullscreenPlacementMutexes = ConcurrentHashMap<PlacementId, Mutex>()
+    private val fullscreenOperations = FullscreenOperationLocks()
 
     private var container: KoinApplication? = null
     private var initializationJob: Job? = null
     private var lastResumedActivity: WeakReference<Activity>? = null
     private var consentLifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
     private var automaticConsentRequestStarted = false
+    private val adapterEventReporter = AdsEventReporter { event -> mutableEvents.tryEmit(event) }
 
     val state: StateFlow<MonetizeKitState> = mutableState.asStateFlow()
     val events: SharedFlow<AdsEvent> = mutableEvents.asSharedFlow()
@@ -206,20 +226,16 @@ object MonetizeKit {
     suspend fun show(
         activity: Activity,
         placement: InterstitialPlacement,
-    ): AdShowResult = fullscreenShowMutex.withLock {
-        withFullscreenPlacementLock(placement.id) {
+    ): AdShowResult = fullscreenOperations.show(placement.id) {
             showInternal(activity, placement) {}
-        }
     }
 
     suspend fun show(
         activity: Activity,
         placement: RewardedPlacement,
         onReward: (AdReward) -> Unit,
-    ): AdShowResult = fullscreenShowMutex.withLock {
-        withFullscreenPlacementLock(placement.id) {
+    ): AdShowResult = fullscreenOperations.show(placement.id) {
             showInternal(activity, placement, onReward)
-        }
     }
 
     /**
@@ -227,14 +243,14 @@ object MonetizeKit {
      * and direct-mode candidates are tried in their configured priority order.
      */
     suspend fun preload(placement: InterstitialPlacement): AdLoadResult =
-        withFullscreenPlacementLock(placement.id) { preloadInternal(placement) }
+        fullscreenOperations.forPlacement(placement.id) { preloadInternal(placement) }
 
     /**
      * Prepares a rewarded ad without showing it. Calls for the same placement are serialized,
      * and direct-mode candidates are tried in their configured priority order.
      */
     suspend fun preload(placement: RewardedPlacement): AdLoadResult =
-        withFullscreenPlacementLock(placement.id) { preloadInternal(placement) }
+        fullscreenOperations.forPlacement(placement.id) { preloadInternal(placement) }
 
     /**
      * Creates a traditional Android View container for use by Views or the ads-compose module.
@@ -250,24 +266,20 @@ object MonetizeKit {
             slot.setError(AdsError(message = "MonetizeKit is not initialized."))
             return slot
         }
-        if (runtime.readyNetworks.isEmpty()) {
-            slot.setError(AdsError(message = "Ads are unavailable until GDPR consent is resolved."))
-            return slot
-        }
         val definition = runtime.configuration.placements[placement.id]
         if (definition == null || definition.placement.format != AdFormat.BANNER) {
             slot.setError(AdsError(message = "Banner placement '${placement.id}' is not configured."))
             return slot
         }
-        val attempts = definition.candidates.mapNotNull { candidate ->
-            runtime.adapters[candidate.network]?.takeIf { AdFormat.BANNER in it.supportedFormats }?.let { adapter ->
-                BannerAttempt(adapter = adapter, placement = placement, adUnitId = candidate.adUnitId)
+        slot.setCandidateProvider {
+            definition.candidates.mapNotNull { candidate ->
+                runtime.adapters[candidate.network]
+                    ?.takeIf { candidate.network in runtime.readyNetworks }
+                    ?.takeIf { AdFormat.BANNER in it.supportedFormats }
+                    ?.let { adapter ->
+                        BannerAttempt(adapter = adapter, placement = placement, adUnitId = candidate.adUnitId)
+                    }
             }
-        }
-        if (attempts.isEmpty()) {
-            slot.setError(AdsError(message = "No initialized network can render '${placement.id}'."))
-        } else {
-            slot.setCandidates(attempts)
         }
         return slot
     }
@@ -283,24 +295,20 @@ object MonetizeKit {
             slot.setError(AdsError(message = "MonetizeKit is not initialized."))
             return slot
         }
-        if (runtime.readyNetworks.isEmpty()) {
-            slot.setError(AdsError(message = "Ads are unavailable until GDPR consent is resolved."))
-            return slot
-        }
         val definition = runtime.configuration.placements[placement.id]
         if (definition == null || definition.placement.format != AdFormat.NATIVE) {
             slot.setError(AdsError(message = "Native placement '${placement.id}' is not configured."))
             return slot
         }
-        val attempts = definition.candidates.mapNotNull { candidate ->
-            runtime.adapters[candidate.network]?.takeIf { AdFormat.NATIVE in it.supportedFormats }?.let { adapter ->
-                NativeAttempt(adapter = adapter, placement = placement, adUnitId = candidate.adUnitId)
+        slot.setCandidateProvider {
+            definition.candidates.mapNotNull { candidate ->
+                runtime.adapters[candidate.network]
+                    ?.takeIf { candidate.network in runtime.readyNetworks }
+                    ?.takeIf { AdFormat.NATIVE in it.supportedFormats }
+                    ?.let { adapter ->
+                        NativeAttempt(adapter = adapter, placement = placement, adUnitId = candidate.adUnitId)
+                    }
             }
-        }
-        if (attempts.isEmpty()) {
-            slot.setError(AdsError(message = "No initialized network can render native placement '${placement.id}'."))
-        } else {
-            slot.setCandidates(attempts)
         }
         return slot
     }
@@ -427,19 +435,26 @@ object MonetizeKit {
                 )
                 return@forEach
             }
-            when (val loadResult = adapter.loadFullscreen(placement, candidate.adUnitId)) {
+            when (
+                val loadResult = adapter.loadFullscreen(
+                    placement = placement,
+                    adUnitId = candidate.adUnitId,
+                    eventReporter = adapterEventReporter,
+                )
+            ) {
                 AdLoadResult.Loaded -> when (
                     val showResult = adapter.showFullscreen(
                         activity = activity,
                         placement = placement,
                         adUnitId = candidate.adUnitId,
                         onReward = onReward,
+                        eventReporter = adapterEventReporter,
                     )
                 ) {
                     AdShowResult.Shown -> {
                         mutableEvents.emit(AdsEvent.AdShown(placement, candidate.network))
                         scope.launch {
-                            withFullscreenPlacementLock(placement.id) {
+                            fullscreenOperations.forPlacement(placement.id) {
                                 preloadInternal(placement)
                             }
                         }
@@ -483,6 +498,7 @@ object MonetizeKit {
                     candidates = definition.candidates,
                     adapters = runtime.adapters,
                     readyNetworks = runtime.readyNetworks,
+                    eventReporter = adapterEventReporter,
                 )
             ) {
                 is FullscreenPreloadResult.Loaded -> {
@@ -493,11 +509,6 @@ object MonetizeKit {
                 is FullscreenPreloadResult.Failed -> failPreload(placement, result.error)
             }
         }
-
-    private suspend fun <T> withFullscreenPlacementLock(
-        placementId: PlacementId,
-        block: suspend () -> T,
-    ): T = fullscreenPlacementMutexes.getOrPut(placementId) { Mutex() }.withLock { block() }
 
     private fun failPreload(placement: FullscreenPlacement, error: AdsError): AdLoadResult.Failed {
         mutableEvents.tryEmit(AdsEvent.AdPreloadFailed(placement, error))
@@ -510,6 +521,8 @@ object MonetizeKit {
     }
 
     private fun currentRuntime(): AdsRuntime? = container?.koin?.get()
+
+    internal fun adapterEventReporter(): AdsEventReporter = adapterEventReporter
 
     private fun observeAdsAccess(runtime: AdsRuntime) {
         scope.launch {

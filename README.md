@@ -224,9 +224,10 @@ and bidding.
 
 ## GDPR and privacy options
 
-MonetizeKit presents one Google UMP consent flow on the first resumed activity and blocks adapter
-initialization until UMP reports that ads may be requested. It does not show a separate Meta or
-Unity dialog.
+By default, MonetizeKit presents one Google UMP consent flow on the first resumed activity and
+blocks adapter initialization until UMP reports that ads may be requested. It does not show a
+separate Meta or Unity dialog. An explicitly configured external CMP replaces UMP; it is never
+combined with it.
 
 Before release, publish a GDPR message in **AdMob → Privacy & messaging** and add every active ad
 partner, including Meta and Unity. This applies to direct mode as well: UMP creates the TCF and
@@ -250,6 +251,36 @@ lifecycleScope.launch {
     if (snapshot.canRequestAds) {
         // Ads may now initialize and load.
     }
+}
+```
+
+### COPPA, TFUA, US states, and an external CMP
+
+`privacy { ... }` is an alias of `gdpr { ... }`; it still runs exactly one consent flow. Use it to
+declare age treatment and the US privacy transport before any ad network initializes:
+
+```kotlin
+privacy {
+    ageRestrictedTreatment(
+        childDirected = true,       // COPPA declaration for Google Mobile Ads
+        underAgeOfConsent = true,   // TFUA for UMP and Google Mobile Ads requests
+    )
+    usStatePrivacy(UsStatePrivacyMode.RESTRICTED_DATA_PROCESSING)
+}
+```
+
+`RESTRICTED_DATA_PROCESSING` writes Google's documented `gad_rdp` signal. Use
+`GLOBAL_PRIVACY_PLATFORM` when UMP or a CMP writes IAB GPP data instead. Neither option decides
+legal applicability for the publisher.
+
+To use a certified external CMP, implement `PrivacyConsentProvider` and configure it once. The
+provider replaces UMP completely; before returning `canRequestAds = true`, it must persist all
+TCF/GPP signals required by the enabled direct networks.
+
+```kotlin
+privacy {
+    externalConsent(appCertifiedCmp)
+    usStatePrivacy(UsStatePrivacyMode.GLOBAL_PRIVACY_PLATFORM)
 }
 ```
 
@@ -329,9 +360,10 @@ val canOpenProSections = (billing.entitlements.value as? EntitlementState.Availa
     ?: false
 ```
 
-`BillingPurchaseEvent.Processed` is emitted only after verification and Google Play finalization;
-observe it for UI or analytics. The server, not the event collector, must grant consumables and
-other paid content idempotently by purchase token. Call `billing.refresh()` when the app returns to
+`BillingPurchaseEvent.Reconciled` is emitted only after verification and Google Play finalization.
+It is a reconciliation signal, not an exactly-once delivery callback: it can repeat after a
+refresh. Observe it for UI or analytics. The server, not the event collector, must grant consumables
+and other paid content idempotently by purchase token. Call `billing.refresh()` when the app returns to
 the foreground if it stays alive for a long time, and call `billing.close()` only when the owning
 application process is shutting down.
 
@@ -352,11 +384,74 @@ fun HomeScreen() {
 ```kotlin
 val bannerSlot = MonetizeKit.createBannerSlot(this, AppAds.homeBanner)
 container.addView(bannerSlot)
-bannerSlot.load()
+bannerSlot.load() // Safe before UMP/network initialization; it waits for Ready.
 
-// Call release if the View will not be detached automatically.
-bannerSlot.release()
+// Fragment views should use their view lifecycle explicitly.
+bannerSlot.bindTo(viewLifecycleOwner)
 ```
+
+After attachment, a slot also discovers the nearest `ViewTreeLifecycleOwner`. It forwards
+pause/resume to compatible ad views and releases its creative at lifecycle destruction or when the
+view is detached. Call `release()` yourself only when neither condition can happen.
+
+### Custom native layout
+
+Pass a `NativeAdRenderer` when declaring a native placement. The renderer creates only the visual
+layout; MonetizeKit owns the network-native wrapper, media view, click registration, and cleanup.
+Every `render` call must return a new, unattached view.
+
+```kotlin
+val articleNative = AdsPlacements.native(
+    id = "article_native",
+    reservedHeightDp = 280,
+    renderer = NativeAdRenderer { context, ad ->
+        val headline = TextView(context).apply { text = ad.headline }
+        val body = TextView(context).apply { text = ad.body.orEmpty() }
+        val cta = Button(context).apply { text = ad.callToAction.orEmpty() }
+        val media = FrameLayout(context)
+
+        NativeAdRenderBinding(
+            root = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(media)
+                addView(headline)
+                addView(body)
+                addView(cta)
+            },
+            headlineView = headline,
+            bodyView = body,
+            callToActionView = cta,
+            mediaContainer = media,
+        )
+    },
+)
+```
+
+`mediaContainer` is required for Meta native ads. The same placement still works in `AdsNative` in
+Compose because it hosts the registered native View through `AndroidView`.
+
+### Adaptive and collapsible banners
+
+Banner presentation is explicit and preserves its reserved height while loading:
+
+```kotlin
+val footerBanner = AdsPlacements.banner(
+    id = "footer_banner",
+    reservedHeightDp = 150,
+    size = BannerSize.AnchoredAdaptive,
+    collapsibleAnchor = CollapsibleBannerAnchor.BOTTOM,
+)
+
+val feedBanner = AdsPlacements.banner(
+    id = "feed_banner",
+    reservedHeightDp = 250,
+    size = BannerSize.InlineAdaptive(maxHeightDp = 250),
+)
+```
+
+Adaptive and collapsible requests are applied by the AdMob adapter. Meta and Unity retain their
+standard banner sizes when they are fallback candidates, so reserve enough height for the largest
+creative the placement may render.
 
 ## Show fullscreen ads
 
@@ -364,6 +459,10 @@ The API is suspending. Preload a fullscreen placement when the SDK becomes `Read
 the first eligible candidate in the configured priority order and does not show anything. Calls for
 the same placement are serialized. A successful `show()` consumes that creative and automatically
 starts preparing its replacement after dismissal.
+
+Manual direct caches have a one-hour maximum lifetime. MonetizeKit drops an expired creative before
+the next `preload()` or `show()` and obtains a fresh one; this follows the Google Mobile Ads caching
+guidance for interstitial and rewarded inventory.
 
 ```kotlin
 lifecycleScope.launch {
@@ -418,10 +517,15 @@ lifecycleScope.launch {
 
 lifecycleScope.launch {
     MonetizeKit.events.collect { event ->
-        // NetworkInitialized, AdsAccessChanged, AdPreloaded, AdShown, or failure events.
+        // NetworkInitialized, AdLoaded, AdImpression, AdClicked, AdPaid,
+        // AdRewardEarned, AdsAccessChanged, AdPreloaded, AdShown, or failure events.
     }
 }
 ```
+
+`AdsEvent.AdPaid` exposes currency, micros, and SDK precision for supported network formats.
+`AdsEvent.AdLoaded` and `AdsError` can include safe response diagnostics such as the AdMob response
+ID and mediation adapter class. Never use these values to reconstruct or log an ad creative.
 
 ## Debug sample
 
