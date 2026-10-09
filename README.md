@@ -581,6 +581,19 @@ the height-reserved Compose banner/native slots. It is a verification tool, not 
 
 ## Verification checklist
 
+### R8 consumer smoke test
+
+`:consumer-r8-smoke` is an internal application that links the direct AdMob, Meta, and Unity
+adapters exactly as a host app would. It has no launcher activity, is never installed by CI, and
+uses public demo/placeholder IDs solely to keep the consumer configuration reachable by R8. Run:
+
+```shell
+./gradlew :ads-core:testDebugUnitTest :consumer-r8-smoke:assembleRelease
+```
+
+`assembleRelease` produces a shrinked APK and verifies merged adapter providers plus every
+library's consumer ProGuard rules. The same command runs in GitHub Actions on push and pull request.
+
 - Configure and publish the UMP privacy message and partner list.
 - Use either `direct { ... }` or `admobMediation { ... }`, never both.
 - Add only the Gradle adapters that belong to the selected mode.

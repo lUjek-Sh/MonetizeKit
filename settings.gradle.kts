@@ -24,6 +24,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "MonetizeKit"
 include(":app")
+include(":consumer-r8-smoke")
 include(":ads-core")
 include(":ads-admob")
 include(":ads-meta")

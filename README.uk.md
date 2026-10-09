@@ -583,6 +583,20 @@ banner/native slots із зарезервованою висотою. Це ін�
 
 ## Перевірка перед релізом
 
+### R8 consumer smoke test
+
+`:consumer-r8-smoke` — внутрішній застосунок, який підключає direct adapters AdMob, Meta та Unity
+так само, як звичайний host app. Він не має launcher activity, CI його не встановлює, а public
+demo/placeholder ID існують лише для того, щоб consumer-конфігурація залишалася досяжною для R8.
+Запуск:
+
+```shell
+./gradlew :ads-core:testDebugUnitTest :consumer-r8-smoke:assembleRelease
+```
+
+`assembleRelease` створює shrinked APK і перевіряє merged adapter provider-и та consumer ProGuard
+rules усіх бібліотек. Та сама команда запускається у GitHub Actions для push і pull request.
+
 - Опублікуйте UMP privacy message та список ad partners.
 - Використовуйте або `direct { ... }`, або `admobMediation { ... }`, але не обидва режими.
 - Додавайте лише Gradle adapters обраного режиму.
