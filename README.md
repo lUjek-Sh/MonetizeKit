@@ -16,7 +16,7 @@
   <a href="README.uk.md">Українська версія</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#ai-integration-brief">AI integration brief</a> ·
-  <a href="#install">Install</a>
+  <a href="#install-locally">Install locally</a>
 </p>
 
 MonetizeKit is a modular Android library in the `ua.lujek.monetizekit` package. It keeps UI code
@@ -27,6 +27,13 @@ slot or explicitly show a fullscreen placement.
 > Choose **one** delivery mode for the application. `direct { ... }` and `admobMediation { ... }`
 > are mutually exclusive. This prevents an ad source from being requested directly and through
 > AdMob Mediation for the same placement.
+
+> [!CAUTION]
+> MonetizeKit is provided **"as is"**, without a guarantee of uninterrupted operation or fitness
+> for a particular purpose. Ad networks, Google Play Billing, UMP/CMP providers, their SDKs,
+> policies, APIs, and services can change, become unavailable, or be discontinued without notice.
+> An integration that works today can therefore require an update or stop working. Pin library
+> versions, test every release on real devices, and keep a rollback plan for production apps.
 
 ## At a glance
 
@@ -49,7 +56,7 @@ slot or explicitly show a fullscreen placement.
 ## Quick start
 
 1. Pick **Direct** or **AdMob Mediation** using the table above.
-2. [Install only the needed modules](#install), then add the AdMob App ID to the manifest.
+2. [Install only the needed modules locally](#install-locally), then add the AdMob App ID to the manifest.
 3. [Define stable placements](#define-placements) outside UI code; banner/native always declare
    `reservedHeightDp`.
 4. Initialise once in `Application.onCreate` using either the
@@ -62,7 +69,7 @@ slot or explicitly show a fullscreen placement.
 
 | Topic | Start here |
 | --- | --- |
-| Packages, composite builds, local AARs, JitPack | [Install](#install) |
+| Local Maven repository | [Install locally](#install-locally) |
 | Placement types and network support | [Define placements](#define-placements) |
 | Direct priority / fallback | [Initialize: direct mode](#initialize-direct-mode) |
 | AdMob bidding / waterfall | [Initialize: AdMob Mediation](#initialize-admob-mediation) |
@@ -134,279 +141,34 @@ README for exact DSL and network-format support.
 
 Include only the adapters required by the selected mode and the formats used by the application.
 
-## Install
+## Install locally
 
-Use GitHub Packages when a released binary is needed. For active MonetizeKit development, choose
-one of the local integration methods below instead.
-
-### GitHub Packages
-
-Published library modules use the coordinates `ua.lujek.monetizekit:<module>:<version>` and are
-hosted in `https://maven.pkg.github.com/lujek-sh/MonetizeKit`. A private GitHub Packages registry
-requires authentication for Gradle dependency resolution.
-
-Create a GitHub **classic** personal access token with `read:packages` and permission to read the
-private `lUjek-Sh/MonetizeKit` repository. Store it outside the project, never in Git. Create or
-edit the global Gradle properties file:
-
-```text
-# Windows: %USERPROFILE%\\.gradle\\gradle.properties
-# macOS/Linux: ~/.gradle/gradle.properties
-gpr.user=YOUR_GITHUB_USERNAME
-gpr.key=github_pat_your_token
-```
-
-In the consuming project's `settings.gradle.kts`, add the registry alongside `google()` and
-`mavenCentral()`:
-
-```kotlin
-dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-        maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/lujek-sh/MonetizeKit")
-            credentials {
-                username = providers.gradleProperty("gpr.user").orNull
-                    ?: System.getenv("GITHUB_ACTOR")
-                password = providers.gradleProperty("gpr.key").orNull
-                    ?: System.getenv("GITHUB_TOKEN")
-            }
-        }
-    }
-}
-```
-
-Then include only the required modules. For direct AdMob with Compose, for example:
-
-```kotlin
-val monetizeKitVersion = "0.1.0"
-
-dependencies {
-    implementation("ua.lujek.monetizekit:ads-core:$monetizeKitVersion")
-    implementation("ua.lujek.monetizekit:ads-admob:$monetizeKitVersion")
-    implementation("ua.lujek.monetizekit:ads-compose:$monetizeKitVersion")
-}
-```
-
-For AdMob Mediation with Meta, use `ads-core`, `ads-admob`, and
-`ads-admob-meta-mediation`; do not also add direct `ads-meta`. Add `billing-core`,
-`billing-google-play`, or `billing-ads` only when billing is needed. The published Gradle metadata
-and POM resolve MonetizeKit module dependencies and public SDK dependencies transitively.
-
-#### Publishing a release
-
-`Publish GitHub Packages` is deliberately not triggered by normal branch pushes. It verifies core
-tests and the minified consumer app, then publishes all library modules when either:
-
-1. a `v*` tag is pushed, for example `v0.1.0`; or
-2. the workflow is started manually in the Actions tab with a version such as `0.1.0`.
-
-The workflow uses the repository `GITHUB_TOKEN` with `packages: write`; no publishing token needs
-to be stored as a repository secret. It rejects `SNAPSHOT` versions. The default local version is
-in `gradle.properties` as `monetizekit.version=0.1.0-SNAPSHOT`; keep it as the next development
-version after a release.
-
-### JitPack for a future public repository
-
-JitPack is configured but inactive while the repository is private. If `lUjek-Sh/MonetizeKit` is
-made public, JitPack builds a tagged revision on demand; it does not receive an upload from the
-GitHub Packages workflow. `jitpack.yml` selects JDK 17 and runs `build publishToMavenLocal`, which
-publishes every library module from this multi-module project.
-
-After a public tag such as `v0.1.0`, a consumer can use JitPack without credentials:
-
-```kotlin
-dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-        maven {
-            url = uri("https://jitpack.io")
-            content { includeGroup("com.github.lUjek-Sh.MonetizeKit") }
-        }
-    }
-}
-```
-
-```kotlin
-dependencies {
-    implementation("com.github.lUjek-Sh.MonetizeKit:ads-core:v0.1.0")
-    implementation("com.github.lUjek-Sh.MonetizeKit:ads-admob:v0.1.0")
-    implementation("com.github.lUjek-Sh.MonetizeKit:ads-compose:v0.1.0")
-}
-```
-
-Use either GitHub Packages or JitPack for a given MonetizeKit version, not both. Keep using a
-release tag for public consumption; branch-SNAPSHOT coordinates are intentionally not documented
-as a production installation method.
-
-### Recommended: composite build from the source checkout
-
-Keep the MonetizeKit checkout next to the host project, for example:
-
-```text
-workspace/
-├── MonetizeKit/
-└── MyApplication/
-```
-
-In the host project's `settings.gradle.kts`, register the checkout and explicitly substitute only
-the MonetizeKit modules the application will use:
-
-```kotlin
-includeBuild("../MonetizeKit") {
-    dependencySubstitution {
-        substitute(module("ua.lujek.monetizekit.local:ads-core"))
-            .using(project(":ads-core"))
-        substitute(module("ua.lujek.monetizekit.local:ads-admob"))
-            .using(project(":ads-admob"))
-        substitute(module("ua.lujek.monetizekit.local:ads-meta"))
-            .using(project(":ads-meta"))
-        substitute(module("ua.lujek.monetizekit.local:ads-unity"))
-            .using(project(":ads-unity"))
-        substitute(module("ua.lujek.monetizekit.local:ads-compose"))
-            .using(project(":ads-compose"))
-        substitute(module("ua.lujek.monetizekit.local:ads-admob-meta-mediation"))
-            .using(project(":ads-admob-meta-mediation"))
-        substitute(module("ua.lujek.monetizekit.local:ads-admob-unity-mediation"))
-            .using(project(":ads-admob-unity-mediation"))
-        substitute(module("ua.lujek.monetizekit.local:billing-core"))
-            .using(project(":billing-core"))
-        substitute(module("ua.lujek.monetizekit.local:billing-google-play"))
-            .using(project(":billing-google-play"))
-        substitute(module("ua.lujek.monetizekit.local:billing-ads"))
-            .using(project(":billing-ads"))
-    }
-}
-```
-
-Then use ordinary module coordinates in the host app's `app/build.gradle.kts`. Gradle resolves
-them from the local checkout; it does not contact a MonetizeKit Maven repository:
-
-```kotlin
-dependencies {
-    implementation("ua.lujek.monetizekit.local:ads-core:local")
-    implementation("ua.lujek.monetizekit.local:ads-admob:local")
-    implementation("ua.lujek.monetizekit.local:ads-compose:local")
-}
-```
-
-Composite build is the preferred development workflow: project dependencies, consumer ProGuard
-rules, and third-party transitive dependencies are all resolved by Gradle automatically.
-
-### Local release AAR files
-
-Use this when the host application must receive binaries rather than the MonetizeKit source tree.
-Build only the modules selected by the app. For example, direct AdMob + Compose on Windows:
+From the MonetizeKit checkout, publish the modules to your local Maven repository:
 
 ```powershell
-.\gradlew.bat :ads-core:assembleRelease :ads-admob:assembleRelease :ads-compose:assembleRelease
+.\gradlew.bat publishToMavenLocal
 ```
 
-On macOS/Linux, use the same task list with `./gradlew`. Every artifact is written to its module's
-`build/outputs/aar/` directory, for example:
-
-```text
-ads-core/build/outputs/aar/ads-core-release.aar
-ads-admob/build/outputs/aar/ads-admob-release.aar
-ads-compose/build/outputs/aar/ads-compose-release.aar
-```
-
-Copy the selected AAR files to the host app, for example `app/libs/monetizekit/`, and reference
-them directly — no `flatDir` or Maven repository is required:
+Use `./gradlew publishToMavenLocal` on macOS/Linux. Then add `mavenLocal()` to the consuming
+project's `settings.gradle.kts` and include only the modules the app uses:
 
 ```kotlin
-dependencies {
-    implementation(files("libs/monetizekit/ads-core-release.aar"))
-    implementation(files("libs/monetizekit/ads-admob-release.aar"))
-    implementation(files("libs/monetizekit/ads-compose-release.aar"))
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        mavenLocal()
+    }
 }
 ```
 
-An AAR is not a fat AAR: it deliberately does not embed its third-party dependencies. Keep the
-normal `google()` and `mavenCentral()` repositories for those public SDKs, then add the runtime
-dependencies for each selected local AAR. These versions match this checkout:
-
 ```kotlin
 dependencies {
-    // Required by ads-core.
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
-    implementation("io.insert-koin:koin-core:4.2.2")
-    implementation("androidx.lifecycle:lifecycle-runtime:2.11.0")
-    implementation("androidx.lifecycle:lifecycle-process:2.11.0")
-    implementation("androidx.datastore:datastore-preferences:1.2.1")
-    implementation("com.google.android.ump:user-messaging-platform:4.0.0")
-
-    // Add for direct AdMob or any AdMob Mediation setup.
-    implementation("com.google.android.gms:play-services-ads:25.5.0")
-
-    // Add only for the corresponding direct adapter.
-    implementation("com.facebook.android:audience-network-sdk:6.22.0") // ads-meta
-    implementation("com.unity3d.ads:unity-ads:4.21.0")                 // ads-unity
-
-    // Add only for the corresponding AdMob Mediation AAR.
-    implementation("com.google.ads.mediation:facebook:6.22.0.1")      // Meta mediation
-    implementation("com.google.ads.mediation:unity:4.21.0.0")         // Unity mediation
+    implementation("ua.lujek.monetizekit:ads-core:0.1.0-SNAPSHOT")
+    implementation("ua.lujek.monetizekit:ads-admob:0.1.0-SNAPSHOT")
+    implementation("ua.lujek.monetizekit:ads-compose:0.1.0-SNAPSHOT")
 }
 ```
-
-For `ads-compose`, also add the same Compose BOM and `foundation`, `runtime`, and `ui`
-dependencies used by the host application. For billing AARs add
-`com.android.billingclient:billing-ktx:9.1.0`; include `billing-core-release.aar` before
-`billing-google-play-release.aar` or `billing-ads-release.aar`.
-
-Do not combine direct Meta/Unity AARs with their AdMob-mediation AAR for the same configuration;
-the normal direct-versus-mediation rule still applies. Consumer R8 rules are already packaged in
-the local AARs — the host must not copy them manually.
-
-### When MonetizeKit modules are subprojects of the same build
-
-The following `project(":…")` declarations work only when the MonetizeKit modules have been
-copied into, or included by, the host's own `settings.gradle.kts`:
-
-### Direct mode
-
-```kotlin
-dependencies {
-    implementation(project(":ads-core"))
-    implementation(project(":ads-admob"))       // only if direct AdMob is used
-    implementation(project(":ads-meta"))        // only if direct Meta is used
-    implementation(project(":ads-unity"))       // only if direct Unity is used
-    implementation(project(":ads-compose"))     // only for Compose UI
-}
-```
-
-### AdMob Mediation mode
-
-```kotlin
-dependencies {
-    implementation(project(":ads-core"))
-    implementation(project(":ads-admob"))
-    implementation(project(":ads-admob-meta-mediation"))  // only if Meta is mediated
-    implementation(project(":ads-admob-unity-mediation")) // only if Unity is mediated
-    implementation(project(":ads-compose"))
-}
-```
-
-Do **not** include `:ads-meta` or `:ads-unity` for a mediated network. The mediation adapter is
-not a direct adapter and is initialized by Google Mobile Ads.
-
-### Optional billing
-
-```kotlin
-dependencies {
-    implementation(project(":billing-core"))
-    implementation(project(":billing-google-play")) // Google Play storefront only
-    implementation(project(":billing-ads"))         // only when a right can disable ads
-}
-```
-
-Billing is entirely optional. An app without purchases includes none of these modules. An app that
-sells purchases unrelated to advertising can include `:billing-core` and
-`:billing-google-play`, but omit `:billing-ads` and `adsAccess(...)`.
 
 ## Manifest
 
@@ -1279,4 +1041,8 @@ matrix runs in GitHub Actions on push and pull request.
 
 Copyright 2026 lUjek-Sh.
 
-MonetizeKit is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for the original author attribution. When redistributing the library or a derivative work, retain both files and their notices.
+MonetizeKit is open source under the [Apache License 2.0](LICENSE): anyone may use, modify, and
+redistribute it, including in commercial products. See [NOTICE](NOTICE) for the original author
+attribution. When redistributing the library or a derivative work, retain `LICENSE`, `NOTICE`, and
+all applicable copyright and attribution notices; modified source files must state that they were
+changed.

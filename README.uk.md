@@ -16,7 +16,7 @@
   <a href="README.md">English version</a> ·
   <a href="#швидкий-старт">Швидкий старт</a> ·
   <a href="#ai-brief-для-інтеграції">AI brief</a> ·
-  <a href="#підключення">Підключення</a>
+  <a href="#локальне-підключення">Локальне підключення</a>
 </p>
 
 MonetizeKit — модульна Android-бібліотека в пакеті `ua.lujek.monetizekit`. Вона прибирає network
@@ -27,6 +27,14 @@ slot або явно показуйте fullscreen placement.
 > Для застосунку оберіть **лише один** режим delivery. `direct { ... }` та
 > `admobMediation { ... }` взаємовиключні: так одне джерело реклами не буде запитуватися водночас
 > напряму та через AdMob Mediation для того самого placement-а.
+
+> [!CAUTION]
+> MonetizeKit надається **"як є"**, без гарантії безперервної роботи чи придатності для певної
+> мети. Рекламні мережі, Google Play Billing, UMP/CMP-провайдери, їхні SDK, політики, API та
+> сервіси можуть без попередження змінитися, стати недоступними або припинити роботу. Тому
+> інтеграція, що працює сьогодні, може потребувати оновлення або перестати працювати. Фіксуйте
+> версії бібліотеки, перевіряйте кожен release на реальних пристроях і майте план rollback для
+> production-застосунків.
 
 ## Коротко
 
@@ -49,7 +57,7 @@ slot або явно показуйте fullscreen placement.
 ## Швидкий старт
 
 1. За таблицею вище оберіть **Direct** або **AdMob Mediation**.
-2. [Підключіть лише потрібні модулі](#підключення) і додайте AdMob App ID до manifest.
+2. [Локально підключіть лише потрібні модулі](#локальне-підключення) і додайте AdMob App ID до manifest.
 3. [Оголосіть стабільні placement-и](#оголосіть-placement-и) поза UI-кодом; для banner/native
    завжди задавайте `reservedHeightDp`.
 4. Один раз ініціалізуйте бібліотеку в `Application.onCreate`, скориставшись прикладом для
@@ -63,7 +71,7 @@ slot або явно показуйте fullscreen placement.
 
 | Тема | Звідки почати |
 | --- | --- |
-| Packages, composite builds, локальні AAR, JitPack | [Підключення](#підключення) |
+| Локальний Maven-репозиторій | [Локальне підключення](#локальне-підключення) |
 | Типи placement-ів і підтримка мереж | [Оголосіть placement-и](#оголосіть-placement-и) |
 | Direct priority / fallback | [Ініціалізація: direct mode](#ініціалізація-direct) |
 | AdMob bidding / waterfall | [Ініціалізація: AdMob Mediation](#ініціалізація-admob-mediation) |
@@ -137,281 +145,34 @@ slot або явно показуйте fullscreen placement.
 
 Підключайте лише адаптери обраного режиму та лише ті формати, які справді потрібні застосунку.
 
-## Підключення
+## Локальне підключення
 
-Для підключення готової release-версії використовуйте GitHub Packages. Для активної розробки
-MonetizeKit краще обрати один із локальних способів нижче.
-
-### GitHub Packages
-
-Опубліковані library-модулі мають coordinates
-`ua.lujek.monetizekit:<module>:<version>` і зберігаються в
-`https://maven.pkg.github.com/lujek-sh/MonetizeKit`. Приватний GitHub Packages registry вимагає
-автентифікації під час отримання залежностей Gradle.
-
-Створіть GitHub **classic** personal access token із `read:packages` та доступом на читання до
-приватного репозиторію `lUjek-Sh/MonetizeKit`. Зберігайте його поза проєктом і ніколи не додавайте
-до Git. Створіть або відредагуйте глобальний Gradle properties-файл:
-
-```text
-# Windows: %USERPROFILE%\\.gradle\\gradle.properties
-# macOS/Linux: ~/.gradle/gradle.properties
-gpr.user=YOUR_GITHUB_USERNAME
-gpr.key=github_pat_your_token
-```
-
-У `settings.gradle.kts` застосунку-споживача додайте registry поруч із `google()` та
-`mavenCentral()`:
-
-```kotlin
-dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-        maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/lujek-sh/MonetizeKit")
-            credentials {
-                username = providers.gradleProperty("gpr.user").orNull
-                    ?: System.getenv("GITHUB_ACTOR")
-                password = providers.gradleProperty("gpr.key").orNull
-                    ?: System.getenv("GITHUB_TOKEN")
-            }
-        }
-    }
-}
-```
-
-Після цього підключіть лише потрібні модулі. Наприклад, для direct AdMob із Compose:
-
-```kotlin
-val monetizeKitVersion = "0.1.0"
-
-dependencies {
-    implementation("ua.lujek.monetizekit:ads-core:$monetizeKitVersion")
-    implementation("ua.lujek.monetizekit:ads-admob:$monetizeKitVersion")
-    implementation("ua.lujek.monetizekit:ads-compose:$monetizeKitVersion")
-}
-```
-
-Для AdMob Mediation із Meta використовуйте `ads-core`, `ads-admob` та
-`ads-admob-meta-mediation`; direct `ads-meta` одночасно не додавайте. `billing-core`,
-`billing-google-play` і `billing-ads` додавайте лише якщо потрібен billing. Опубліковані Gradle
-metadata та POM транзитивно підключають залежності між модулями MonetizeKit і публічні SDK.
-
-#### Публікація release
-
-`Publish GitHub Packages` навмисно не запускається на звичайний push у гілку. Він перевіряє core
-tests і minified consumer app, після чого публікує всі library-модулі в одному з двох випадків:
-
-1. після push тегу `v*`, наприклад `v0.1.0`; або
-2. після ручного запуску workflow у вкладці Actions із версією, наприклад `0.1.0`.
-
-Workflow використовує `GITHUB_TOKEN` цього репозиторію з `packages: write`, тому publishing token
-не потрібно зберігати в repository secrets. `SNAPSHOT`-версії workflow відхиляє. Локальна
-development-версія задається у `gradle.properties` як
-`monetizekit.version=0.1.0-SNAPSHOT`; після release залишайте там наступну development-версію.
-
-### JitPack для майбутнього публічного репозиторію
-
-JitPack уже налаштований, але не використовується, поки репозиторій приватний. Якщо
-`lUjek-Sh/MonetizeKit` стане публічним, JitPack збиратиме tagged revision на вимогу; GitHub
-Packages workflow нічого туди не завантажує. `jitpack.yml` обирає JDK 17 і виконує
-`build publishToMavenLocal`, що публікує кожен library-модуль цього multi-module проєкту.
-
-Після публічного тегу, наприклад `v0.1.0`, застосунок-споживач може використати JitPack без
-credentials:
-
-```kotlin
-dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-        maven {
-            url = uri("https://jitpack.io")
-            content { includeGroup("com.github.lUjek-Sh.MonetizeKit") }
-        }
-    }
-}
-```
-
-```kotlin
-dependencies {
-    implementation("com.github.lUjek-Sh.MonetizeKit:ads-core:v0.1.0")
-    implementation("com.github.lUjek-Sh.MonetizeKit:ads-admob:v0.1.0")
-    implementation("com.github.lUjek-Sh.MonetizeKit:ads-compose:v0.1.0")
-}
-```
-
-Для однієї версії MonetizeKit обирайте або GitHub Packages, або JitPack, але не обидва. Для
-production використовуйте release tag; branch-SNAPSHOT coordinates навмисно не документуються як
-спосіб production-підключення.
-
-### Рекомендовано: composite build із checkout вихідного коду
-
-Розмістіть checkout MonetizeKit поруч із host-проєктом, наприклад:
-
-```text
-workspace/
-├── MonetizeKit/
-└── MyApplication/
-```
-
-У `settings.gradle.kts` host-проєкту зареєструйте checkout і явно підставте лише модулі
-MonetizeKit, які використовує застосунок:
-
-```kotlin
-includeBuild("../MonetizeKit") {
-    dependencySubstitution {
-        substitute(module("ua.lujek.monetizekit.local:ads-core"))
-            .using(project(":ads-core"))
-        substitute(module("ua.lujek.monetizekit.local:ads-admob"))
-            .using(project(":ads-admob"))
-        substitute(module("ua.lujek.monetizekit.local:ads-meta"))
-            .using(project(":ads-meta"))
-        substitute(module("ua.lujek.monetizekit.local:ads-unity"))
-            .using(project(":ads-unity"))
-        substitute(module("ua.lujek.monetizekit.local:ads-compose"))
-            .using(project(":ads-compose"))
-        substitute(module("ua.lujek.monetizekit.local:ads-admob-meta-mediation"))
-            .using(project(":ads-admob-meta-mediation"))
-        substitute(module("ua.lujek.monetizekit.local:ads-admob-unity-mediation"))
-            .using(project(":ads-admob-unity-mediation"))
-        substitute(module("ua.lujek.monetizekit.local:billing-core"))
-            .using(project(":billing-core"))
-        substitute(module("ua.lujek.monetizekit.local:billing-google-play"))
-            .using(project(":billing-google-play"))
-        substitute(module("ua.lujek.monetizekit.local:billing-ads"))
-            .using(project(":billing-ads"))
-    }
-}
-```
-
-Після цього використовуйте звичайні module coordinates у `app/build.gradle.kts` host-застосунку.
-Gradle візьме їх із локального checkout і не звертатиметься до Maven-репозиторію MonetizeKit:
-
-```kotlin
-dependencies {
-    implementation("ua.lujek.monetizekit.local:ads-core:local")
-    implementation("ua.lujek.monetizekit.local:ads-admob:local")
-    implementation("ua.lujek.monetizekit.local:ads-compose:local")
-}
-```
-
-Composite build — найкращий спосіб для розробки: Gradle автоматично бачить project dependencies,
-consumer ProGuard rules та транзитивні third-party залежності.
-
-### Локальні release AAR-файли
-
-Використовуйте цей варіант, коли host-застосунок має отримати бінарні файли замість вихідного коду
-MonetizeKit. Зберіть лише обрані застосунком модулі. Наприклад, direct AdMob + Compose у Windows:
+У checkout MonetizeKit опублікуйте модулі до локального Maven-репозиторію:
 
 ```powershell
-.\gradlew.bat :ads-core:assembleRelease :ads-admob:assembleRelease :ads-compose:assembleRelease
+.\gradlew.bat publishToMavenLocal
 ```
 
-У macOS/Linux використайте той самий список task із `./gradlew`. Кожен artifact з'явиться у
-`build/outputs/aar/` свого модуля, наприклад:
-
-```text
-ads-core/build/outputs/aar/ads-core-release.aar
-ads-admob/build/outputs/aar/ads-admob-release.aar
-ads-compose/build/outputs/aar/ads-compose-release.aar
-```
-
-Скопіюйте потрібні AAR-файли в host-застосунок, наприклад у `app/libs/monetizekit/`, і підключіть
-їх напряму — `flatDir` та Maven-репозиторій не потрібні:
+У macOS/Linux використайте `./gradlew publishToMavenLocal`. Потім додайте `mavenLocal()` до
+`settings.gradle.kts` застосунку-споживача та підключіть лише потрібні модулі:
 
 ```kotlin
-dependencies {
-    implementation(files("libs/monetizekit/ads-core-release.aar"))
-    implementation(files("libs/monetizekit/ads-admob-release.aar"))
-    implementation(files("libs/monetizekit/ads-compose-release.aar"))
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        mavenLocal()
+    }
 }
 ```
 
-AAR не є fat AAR: він навмисно не містить усі сторонні залежності. Залиште звичайні репозиторії
-`google()` та `mavenCentral()` для публічних SDK, після чого додайте runtime-залежності для
-кожного обраного локального AAR. Версії нижче відповідають цьому checkout:
-
 ```kotlin
 dependencies {
-    // Потрібно для ads-core.
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
-    implementation("io.insert-koin:koin-core:4.2.2")
-    implementation("androidx.lifecycle:lifecycle-runtime:2.11.0")
-    implementation("androidx.lifecycle:lifecycle-process:2.11.0")
-    implementation("androidx.datastore:datastore-preferences:1.2.1")
-    implementation("com.google.android.ump:user-messaging-platform:4.0.0")
-
-    // Додайте для direct AdMob або будь-якої конфігурації AdMob Mediation.
-    implementation("com.google.android.gms:play-services-ads:25.5.0")
-
-    // Додайте лише для відповідного direct adapter-а.
-    implementation("com.facebook.android:audience-network-sdk:6.22.0") // ads-meta
-    implementation("com.unity3d.ads:unity-ads:4.21.0")                 // ads-unity
-
-    // Додайте лише для відповідного AAR AdMob Mediation.
-    implementation("com.google.ads.mediation:facebook:6.22.0.1")      // Meta mediation
-    implementation("com.google.ads.mediation:unity:4.21.0.0")         // Unity mediation
+    implementation("ua.lujek.monetizekit:ads-core:0.1.0-SNAPSHOT")
+    implementation("ua.lujek.monetizekit:ads-admob:0.1.0-SNAPSHOT")
+    implementation("ua.lujek.monetizekit:ads-compose:0.1.0-SNAPSHOT")
 }
 ```
-
-Для `ads-compose` також додайте той самий Compose BOM і залежності `foundation`, `runtime` та
-`ui`, які використовує host-застосунок. Для billing AAR додайте
-`com.android.billingclient:billing-ktx:9.1.0`; підключайте `billing-core-release.aar` перед
-`billing-google-play-release.aar` або `billing-ads-release.aar`.
-
-Не поєднуйте direct Meta/Unity AAR із відповідним AdMob-mediation AAR в одній конфігурації:
-звичайне правило direct проти mediation залишається чинним. Consumer R8 rules уже є всередині
-локальних AAR — вручну копіювати їх у host не треба.
-
-### Коли модулі MonetizeKit є subproject-ами того самого build
-
-Наведені нижче декларації `project(":…")` працюють лише тоді, коли модулі MonetizeKit скопійовані
-у власний `settings.gradle.kts` host-проєкту або включені ним:
-
-### Direct-режим
-
-```kotlin
-dependencies {
-    implementation(project(":ads-core"))
-    implementation(project(":ads-admob"))       // лише якщо потрібен direct AdMob
-    implementation(project(":ads-meta"))        // лише якщо потрібен direct Meta
-    implementation(project(":ads-unity"))       // лише якщо потрібен direct Unity
-    implementation(project(":ads-compose"))     // лише для Compose UI
-}
-```
-
-### AdMob Mediation
-
-```kotlin
-dependencies {
-    implementation(project(":ads-core"))
-    implementation(project(":ads-admob"))
-    implementation(project(":ads-admob-meta-mediation"))  // лише якщо Meta у mediation
-    implementation(project(":ads-admob-unity-mediation")) // лише якщо Unity у mediation
-    implementation(project(":ads-compose"))
-}
-```
-
-Для mediated мережі не додавайте `:ads-meta` або `:ads-unity`: mediation adapter не є direct
-adapter-ом і його ініціалізує Google Mobile Ads SDK.
-
-### Необов'язковий billing
-
-```kotlin
-dependencies {
-    implementation(project(":billing-core"))
-    implementation(project(":billing-google-play")) // лише для Google Play storefront
-    implementation(project(":billing-ads"))         // лише коли entitlement може вимкнути рекламу
-}
-```
-
-Billing повністю необов'язковий. Застосунок без покупок не додає ці модулі. Якщо застосунок продає
-лише покупки, не пов'язані з рекламою, додайте `:billing-core` і `:billing-google-play`, але не
-додавайте `:billing-ads` та не викликайте `adsAccess(...)`.
 
 ## AndroidManifest
 
@@ -1288,4 +1049,8 @@ rules усіх бібліотек. Скрипт і CI також встанов�
 
 Copyright 2026 lUjek-Sh.
 
-MonetizeKit ліцензовано за [Apache License 2.0](LICENSE). Відомості про початкового автора наведені у [NOTICE](NOTICE). Під час поширення бібліотеки або похідної роботи зберігайте обидва файли та їхні повідомлення.
+MonetizeKit — open source за [Apache License 2.0](LICENSE): будь-хто може використовувати,
+змінювати та поширювати його, зокрема у комерційних продуктах. Відомості про початкового автора
+наведені у [NOTICE](NOTICE). Під час поширення бібліотеки або похідної роботи зберігайте
+`LICENSE`, `NOTICE` та всі застосовні copyright/attribution notices; у змінених source-файлах
+потрібно зазначати факт зміни.
