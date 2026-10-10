@@ -94,6 +94,9 @@ jobs:
           echo 'KERNEL=="kvm", MODE="0666", GROUP="kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          # The node can already exist before the rule is reloaded, so apply
+          # the permission change to this CI run immediately as well.
+          sudo chmod a+rw /dev/kvm
           test -r /dev/kvm
           test -w /dev/kvm
 
