@@ -68,6 +68,22 @@ jobs:
         with:
           cache-provider: basic
 
+      # Build before starting the AVD. Compiling all test APKs while an Android
+      # 35 emulator is running exhausts the resources of a standard hosted
+      # runner and can make ADB unresponsive before the first installation.
+      - name: Assemble Android behavior-test artifacts
+        run: >-
+          ./gradlew
+          :ads-core:assembleDebugAndroidTest
+          :ads-compose:assembleDebugAndroidTest
+          :billing-google-play:assembleDebugAndroidTest
+          :app:assembleDebug
+          :app:assembleDebugAndroidTest
+          :consumer-r8-smoke:assembleDebug
+          :consumer-r8-smoke:assembleDebugAndroidTest
+          :consumer-r8-smoke:assembleRelease
+          --stacktrace
+
       # GitHub's Linux image exposes /dev/kvm, but the runner user does not
       # receive access by default. Without this rule the emulator action falls
       # back to software emulation (-accel off), which can leave ADB offline.
