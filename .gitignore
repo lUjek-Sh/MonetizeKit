@@ -21,3 +21,4 @@ local.properties
 /billing-google-play/build
 /consumer-r8-smoke/build
 /state
+/ads-unity-sdk/build

@@ -21,7 +21,7 @@ android {
 
 dependencies {
     api(project(":ads-core"))
-    implementation(libs.unity.ads)
+    implementation(project(":ads-unity-sdk"))
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
 }

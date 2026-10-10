@@ -26,6 +26,7 @@ val publishedLibraryModules = setOf(
     "ads-core",
     "ads-admob",
     "ads-meta",
+    "ads-unity-sdk",
     "ads-unity",
     "ads-admob-meta-mediation",
     "ads-admob-unity-mediation",

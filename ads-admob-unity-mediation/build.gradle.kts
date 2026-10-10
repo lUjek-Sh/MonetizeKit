@@ -21,5 +21,6 @@ android {
 
 dependencies {
     api(project(":ads-admob"))
+    implementation(project(":ads-unity-sdk"))
     implementation(libs.google.ads.mediation.unity)
 }

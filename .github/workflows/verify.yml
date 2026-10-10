@@ -34,6 +34,8 @@ jobs:
         run: >-
           ./gradlew testDebugUnitTest
           :consumer-r8-smoke:assembleRelease
+          :ads-unity-sdk:generatePomFileForReleasePublication
+          :ads-admob-unity-mediation:generatePomFileForReleasePublication
           :consumer-r8-smoke:analyzeReleaseR8Config
           --stacktrace
 
@@ -45,6 +47,11 @@ jobs:
           "${analyzer}" dex packages "${apk}" | grep -Fq "com.google.ads.mediation.facebook.FacebookMediationAdapter"
           "${analyzer}" dex packages "${apk}" | grep -Fq "com.google.ads.mediation.unity.UnityMediationAdapter"
           "${analyzer}" dex packages "${apk}" | grep -Fq "ua.lujek.monetizekit.mediation.meta.MetaAdMobMediationInitializer"
+
+          unity_sdk_pom="ads-unity-sdk/build/publications/release/pom-default.xml"
+          unity_mediation_pom="ads-admob-unity-mediation/build/publications/release/pom-default.xml"
+          grep -Fq "<artifactId>unity-ads</artifactId>" "${unity_sdk_pom}"
+          grep -Fq "<artifactId>ads-unity-sdk</artifactId>" "${unity_mediation_pom}"
 
   instrumented:
     name: Android instrumented verification
