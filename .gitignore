@@ -20,3 +20,4 @@ local.properties
 /billing-core/build
 /billing-google-play/build
 /consumer-r8-smoke/build
+/state
