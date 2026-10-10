@@ -74,29 +74,46 @@ jobs:
       - name: Assemble Android behavior-test artifacts
         run: >-
           ./gradlew
-          :ads-core:assembleDebugAndroidTest
-          :ads-compose:assembleDebugAndroidTest
-          :billing-google-play:assembleDebugAndroidTest
+          :ads-core:packageDebugAndroidTest
+          :ads-compose:packageDebugAndroidTest
+          :billing-google-play:packageDebugAndroidTest
           :app:assembleDebug
-          :app:assembleDebugAndroidTest
+          :app:packageDebugAndroidTest
           :consumer-r8-smoke:assembleDebug
-          :consumer-r8-smoke:assembleDebugAndroidTest
+          :consumer-r8-smoke:packageDebugAndroidTest
           :consumer-r8-smoke:assembleRelease
           --stacktrace
 
-      # GitHub's Linux image exposes /dev/kvm, but the runner user does not
-      # receive access by default. Without this rule the emulator action falls
-      # back to software emulation (-accel off), which can leave ADB offline.
+      - name: Verify prebuilt Android test artifacts
+        shell: bash
+        run: |
+          required_apks=(
+            "ads-core/build/outputs/apk/androidTest/debug/ads-core-debug-androidTest.apk"
+            "ads-compose/build/outputs/apk/androidTest/debug/ads-compose-debug-androidTest.apk"
+            "billing-google-play/build/outputs/apk/androidTest/debug/billing-google-play-debug-androidTest.apk"
+            "app/build/outputs/apk/debug/app-debug.apk"
+            "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+            "consumer-r8-smoke/build/outputs/apk/debug/consumer-r8-smoke-debug.apk"
+            "consumer-r8-smoke/build/outputs/apk/androidTest/debug/consumer-r8-smoke-debug-androidTest.apk"
+            "consumer-r8-smoke/build/outputs/apk/release/consumer-r8-smoke-release.apk"
+          )
+
+          for apk in "${required_apks[@]}"; do
+            test -f "${apk}"
+            echo "Found ${apk}"
+          done
+
+      # The static node option is required for the emulator action to detect
+      # KVM consistently on GitHub-hosted Linux runners. Without it the action
+      # falls back to software emulation (-accel off), which is very slow and
+      # can leave ADB offline during boot.
       - name: Enable KVM access for the Android emulator
         shell: bash
         run: |
           test -e /dev/kvm
-          echo 'KERNEL=="kvm", MODE="0666", GROUP="kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          # The node can already exist before the rule is reloaded, so apply
-          # the permission change to this CI run immediately as well.
-          sudo chmod a+rw /dev/kvm
           test -r /dev/kvm
           test -w /dev/kvm
 
@@ -107,5 +124,6 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
+          emulator-boot-timeout: 180
           script: |
             bash scripts/ci/run-instrumented-tests.sh
