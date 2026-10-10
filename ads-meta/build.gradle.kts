@@ -23,4 +23,5 @@ dependencies {
     api(project(":ads-core"))
     implementation(libs.meta.audience.network)
     implementation(libs.kotlinx.coroutines.android)
+    testImplementation(libs.junit)
 }

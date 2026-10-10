@@ -23,4 +23,5 @@ dependencies {
     api(project(":ads-core"))
     implementation(libs.google.mobile.ads)
     implementation(libs.kotlinx.coroutines.android)
+    testImplementation(libs.junit)
 }

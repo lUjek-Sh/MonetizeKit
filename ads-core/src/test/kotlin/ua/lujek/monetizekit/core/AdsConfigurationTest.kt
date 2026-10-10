@@ -166,11 +166,19 @@ class AdsConfigurationTest {
 
     @Test
     fun `default native appearance reserves enough vertical space for every built-in asset`() {
-        assertEquals(448, NativeAdAppearance().minimumReservedHeightDp)
+        val appearance = NativeAdAppearance()
+
+        assertEquals(448, appearance.minimumReservedHeightDp)
         assertEquals(
             468,
             NativeAdAppearance(mediaHeightDp = 200).minimumReservedHeightDp,
         )
+        assertEquals(487, appearance.minimumReservedHeightDp(fontScale = 1.3f))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `native minimum reservation rejects invalid font scale`() {
+        NativeAdAppearance().minimumReservedHeightDp(fontScale = 0f)
     }
 
     @Test

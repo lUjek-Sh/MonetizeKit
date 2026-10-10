@@ -7,7 +7,6 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.viewinterop.AndroidView
 import ua.lujek.monetizekit.core.MonetizeKit
 import ua.lujek.monetizekit.core.AdsAccess
 import ua.lujek.monetizekit.core.NativePlacement
@@ -33,7 +32,8 @@ fun AdsNative(
     if (adsAccess != AdsAccess.Allowed) return
 
     key(placement.id.value, kitState) {
-        AndroidView(
+        InlineAdHost(
+            adsAccess = adsAccess,
             // AndroidView intentionally does not clip its child by default. Native media may be
             // backed by a SurfaceView, so enforce the placement boundary before the next Compose
             // item (such as another ad slot) is drawn.

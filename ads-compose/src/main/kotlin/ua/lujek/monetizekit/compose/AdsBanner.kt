@@ -6,7 +6,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.viewinterop.AndroidView
 import ua.lujek.monetizekit.core.MonetizeKit
 import ua.lujek.monetizekit.core.AdsAccess
 import ua.lujek.monetizekit.core.BannerPlacement
@@ -28,7 +27,8 @@ fun AdsBanner(
 
     // Recreate a previously unavailable slot after asynchronous SDK initialization completes.
     key(placement.id.value, kitState) {
-        AndroidView(
+        InlineAdHost(
+            adsAccess = adsAccess,
             modifier = modifier,
             factory = { MonetizeKit.createBannerSlot(context, placement).also { it.load() } },
             update = { it.load() },

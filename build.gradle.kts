@@ -67,6 +67,13 @@ subprojects {
                                 "Modular Android ads, privacy, and billing toolkit for MonetizeKit.",
                             )
                             url.set("https://github.com/lUjek-Sh/MonetizeKit")
+                            licenses {
+                                license {
+                                    name.set("Apache License, Version 2.0")
+                                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                                    distribution.set("repo")
+                                }
+                            }
                             scm {
                                 connection.set("scm:git:https://github.com/lUjek-Sh/MonetizeKit.git")
                                 developerConnection.set("scm:git:ssh://git@github.com/lUjek-Sh/MonetizeKit.git")

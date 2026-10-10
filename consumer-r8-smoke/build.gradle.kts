@@ -14,14 +14,18 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
-            optimization {
-                enable = true
-                packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
-            }
+            // This module verifies code shrinking and consumer keep rules. Resource shrinking is
+            // intentionally out of scope and currently prevents AGP's standalone R8 analyzer
+            // from producing its report for an APK with no app resources.
+            isMinifyEnabled = true
+            isShrinkResources = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -38,4 +42,7 @@ dependencies {
     implementation(project(":ads-unity"))
     implementation(project(":ads-admob-meta-mediation"))
     implementation(project(":ads-admob-unity-mediation"))
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.core.ktx)
+    androidTestImplementation(libs.androidx.test.runner)
 }

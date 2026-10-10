@@ -51,10 +51,9 @@ dependencies {
     implementation(project(":ads-core"))
 
     testImplementation(libs.junit)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.junit)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
+    androidTestImplementation(libs.androidx.test.core.ktx)
+    androidTestImplementation(libs.androidx.test.runner)
     debugImplementation(libs.google.mobile.ads)
     debugImplementation(project(":ads-admob"))
     debugImplementation(project(":ads-meta"))

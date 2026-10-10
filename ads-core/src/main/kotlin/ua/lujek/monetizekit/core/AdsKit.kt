@@ -169,11 +169,19 @@ object MonetizeKit {
             check(mutableState.value is MonetizeKitState.Uninitialized) {
                 "MonetizeKit has already been initialized. Configure it once in Application.onCreate()."
             }
+            configuration.requireNativeReservations(
+                fontScale = application.resources.configuration.fontScale,
+            )
 
             val configuredNetworks = configuration.configuredNetworks()
+            val missingAdapters = configuredNetworks - adapterFactories.keys
+            require(missingAdapters.isEmpty()) {
+                "No MonetizeKit adapter is registered for $missingAdapters. " +
+                    "Add the matching ads-admob, ads-meta, or ads-unity artifact to the application."
+            }
             val adapters = configuredNetworks.associateWith { network ->
-                adapterFactories[network]?.create()
-            }.filterValues { it != null }.mapValues { (_, adapter) -> requireNotNull(adapter) }
+                requireNotNull(adapterFactories[network]).create()
+            }
             val runtime = AdsRuntime(
                 application = application,
                 configuration = configuration,
@@ -808,6 +816,21 @@ object MonetizeKit {
         if (adMob != null) add(AdsNetwork.ADMOB)
         if (meta != null) add(AdsNetwork.META)
         if (unity != null) add(AdsNetwork.UNITY)
+    }
+
+    private fun AdsConfiguration.requireNativeReservations(fontScale: Float) {
+        val requiredHeightDp = nativeAdAppearance.minimumReservedHeightDp(fontScale)
+        placements.values.forEach { definition ->
+            val placement = definition.placement as? NativePlacement ?: return@forEach
+            if (placement.renderer == null) {
+                require(placement.reservedHeightDp >= requiredHeightDp) {
+                    "Native placement '${placement.id}' reserves ${placement.reservedHeightDp}dp, " +
+                        "but the configured default native card needs at least ${requiredHeightDp}dp " +
+                        "at fontScale=$fontScale. Use NativeAdAppearance.minimumReservedHeightDp(fontScale) " +
+                        "or provide a custom NativeAdRenderer."
+                }
+            }
+        }
     }
 
     private fun AdsConfiguration.automaticAppOpenPlacement(): PlacementDefinition? =

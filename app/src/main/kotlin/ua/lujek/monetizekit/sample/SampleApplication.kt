@@ -21,6 +21,10 @@ class SampleApplication : Application() {
         val umpTestDeviceHash = SamplePrivacyTestSettingsStore.readUmpTestDeviceHash(this)
         val meta = SampleDebugConfiguration.meta
         val unity = SampleDebugConfiguration.unity
+        DebugSamplePlacements.configureNativePlacements(
+            appearance = DebugSampleNativeAppearance,
+            fontScale = resources.configuration.fontScale,
+        )
         MonetizeKit.initialize(this) {
             privacy {
                 when (privacyProfile) {
@@ -146,24 +150,38 @@ class SampleApplication : Application() {
 
 object DebugSamplePlacements {
     val adMobBanner = AdsPlacements.banner(id = "debug_admob_banner", reservedHeightDp = 96)
-    val adMobNative = AdsPlacements.native(
+    var adMobNative = AdsPlacements.native(
         id = "debug_admob_native",
         reservedHeightDp = DebugSampleNativeAppearance.minimumReservedHeightDp,
     )
+        private set
     val adMobInterstitial = AdsPlacements.interstitial(id = "debug_admob_interstitial")
     val adMobRewarded = AdsPlacements.rewarded(id = "debug_admob_rewarded")
     val adMobRewardedInterstitial = AdsPlacements.rewardedInterstitial(id = "debug_admob_rewarded_interstitial")
     val adMobAppOpen = AdsPlacements.appOpen(id = "debug_admob_app_open")
     val metaBanner = AdsPlacements.banner(id = "debug_meta_banner", reservedHeightDp = 96)
-    val metaNative = AdsPlacements.native(
+    var metaNative = AdsPlacements.native(
         id = "debug_meta_native",
         reservedHeightDp = DebugSampleNativeAppearance.minimumReservedHeightDp,
     )
+        private set
     val metaInterstitial = AdsPlacements.interstitial(id = "debug_meta_interstitial")
     val metaRewarded = AdsPlacements.rewarded(id = "debug_meta_rewarded")
     val unityBanner = AdsPlacements.banner(id = "debug_unity_banner", reservedHeightDp = 96)
     val unityInterstitial = AdsPlacements.interstitial(id = "debug_unity_interstitial")
     val unityRewarded = AdsPlacements.rewarded(id = "debug_unity_rewarded")
+
+    fun configureNativePlacements(appearance: NativeAdAppearance, fontScale: Float) {
+        val reservedHeightDp = appearance.minimumReservedHeightDp(fontScale)
+        adMobNative = AdsPlacements.native(
+            id = "debug_admob_native",
+            reservedHeightDp = reservedHeightDp,
+        )
+        metaNative = AdsPlacements.native(
+            id = "debug_meta_native",
+            reservedHeightDp = reservedHeightDp,
+        )
+    }
 }
 
 private object DebugAdMobIds {

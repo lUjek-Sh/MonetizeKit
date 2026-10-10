@@ -1,6 +1,7 @@
 package ua.lujek.monetizekit.sample
 
 import android.content.Context
+import androidx.core.content.edit
 import ua.lujek.monetizekit.core.GdprDebugGeography
 
 internal data class MetaDebugPlacementIds(
@@ -68,13 +69,10 @@ internal object SamplePrivacyTestSettingsStore {
     fun saveUmpTestDeviceHash(context: Context, value: String): String? {
         val normalizedValue = value.nullIfBlank()
         currentUmpTestDeviceHash = normalizedValue
-        context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
-            .edit()
-            .apply {
-                if (normalizedValue == null) remove(umpTestDeviceHashKey)
-                else putString(umpTestDeviceHashKey, normalizedValue)
-            }
-            .apply()
+        context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE).edit {
+            if (normalizedValue == null) remove(umpTestDeviceHashKey)
+            else putString(umpTestDeviceHashKey, normalizedValue)
+        }
         return normalizedValue
     }
 }
@@ -135,10 +133,9 @@ internal object SamplePrivacyProfileStore {
 
     fun save(context: Context, profile: SamplePrivacyProfile) {
         currentProfile = profile
-        context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
-            .edit()
-            .putString(profileKey, profile.name)
-            .apply()
+        context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE).edit {
+            putString(profileKey, profile.name)
+        }
     }
 }
 

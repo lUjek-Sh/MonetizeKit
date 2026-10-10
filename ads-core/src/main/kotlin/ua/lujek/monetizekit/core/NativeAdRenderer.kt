@@ -124,36 +124,54 @@ data class NativeAdAppearance(
      * is present: two-line headline, advertiser, three-line body, CTA, and [mediaHeightDp].
      *
      * The value includes a small rounding allowance for Android text measurement at the default
-     * font scale. Apps that support an increased system font scale should reserve extra space or
-     * supply a custom [NativeAdRenderer].
+     * font scale. Use [minimumReservedHeightDp] with the current font scale when creating a
+     * placement after a [Context] is available.
      */
     val minimumReservedHeightDp: Int
-        get() {
-            val attributionHeight = max(
-                attributionMinimumSizeDp,
-                lineHeightDp(textSizeSp = 11f, maxLines = 1) + attributionVerticalPaddingDp * 2,
-            )
-            val headlineHeight = lineHeightDp(headlineTextSizeSp, maxLines = 2)
-            val advertiserHeight = lineHeightDp(secondaryTextSizeSp, maxLines = 1)
-            val identityHeight = max(iconSizeDp, headlineHeight + identitySpacingDp + advertiserHeight)
-            val bodyHeight = lineHeightDp(secondaryTextSizeSp, maxLines = 3)
-            val callToActionHeight = max(
-                callToActionMinHeightDp,
-                lineHeightDp(callToActionTextSizeSp, maxLines = 1) + callToActionVerticalPaddingDp * 2,
-            )
-            return contentPaddingDp * 2 +
-                attributionHeight +
-                headerTopMarginDp +
-                identityHeight +
-                mediaTopMarginDp +
-                mediaHeightDp +
-                itemSpacingDp + bodyHeight +
-                itemSpacingDp + callToActionHeight +
-                TEXT_MEASUREMENT_ALLOWANCE_DP
-        }
+        get() = minimumReservedHeightDp(fontScale = 1f)
 
-    private fun lineHeightDp(textSizeSp: Float, maxLines: Int): Int =
-        ceil(textSizeSp * DEFAULT_LINE_HEIGHT_MULTIPLIER * maxLines).toInt()
+    /**
+     * Minimum native placement reservation for the built-in renderer at [fontScale].
+     *
+     * Pass `context.resources.configuration.fontScale` when placements are created during
+     * application startup. This keeps all supported text assets inside the reserved native slot
+     * when the user uses a larger system font.
+     */
+    fun minimumReservedHeightDp(fontScale: Float): Int {
+        require(fontScale > 0f) { "Native card fontScale must be greater than zero." }
+        val attributionHeight = max(
+            attributionMinimumSizeDp,
+            lineHeightDp(
+                textSizeSp = 11f,
+                maxLines = 1,
+                fontScale = fontScale,
+            ) + attributionVerticalPaddingDp * 2,
+        )
+        val headlineHeight = lineHeightDp(headlineTextSizeSp, maxLines = 2, fontScale = fontScale)
+        val advertiserHeight = lineHeightDp(secondaryTextSizeSp, maxLines = 1, fontScale = fontScale)
+        val identityHeight = max(iconSizeDp, headlineHeight + identitySpacingDp + advertiserHeight)
+        val bodyHeight = lineHeightDp(secondaryTextSizeSp, maxLines = 3, fontScale = fontScale)
+        val callToActionHeight = max(
+            callToActionMinHeightDp,
+            lineHeightDp(
+                textSizeSp = callToActionTextSizeSp,
+                maxLines = 1,
+                fontScale = fontScale,
+            ) + callToActionVerticalPaddingDp * 2,
+        )
+        return contentPaddingDp * 2 +
+            attributionHeight +
+            headerTopMarginDp +
+            identityHeight +
+            mediaTopMarginDp +
+            mediaHeightDp +
+            itemSpacingDp + bodyHeight +
+            itemSpacingDp + callToActionHeight +
+            TEXT_MEASUREMENT_ALLOWANCE_DP
+    }
+
+    private fun lineHeightDp(textSizeSp: Float, maxLines: Int, fontScale: Float): Int =
+        ceil(textSizeSp * fontScale * DEFAULT_LINE_HEIGHT_MULTIPLIER * maxLines).toInt()
 
     private companion object {
         const val DEFAULT_LINE_HEIGHT_MULTIPLIER = 1.25f

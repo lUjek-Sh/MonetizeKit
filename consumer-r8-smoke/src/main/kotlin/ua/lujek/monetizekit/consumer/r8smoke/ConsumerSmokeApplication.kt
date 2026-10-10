@@ -3,6 +3,7 @@ package ua.lujek.monetizekit.consumer.r8smoke
 import android.app.Application
 import ua.lujek.monetizekit.core.AdsPlacements
 import ua.lujek.monetizekit.core.MonetizeKit
+import ua.lujek.monetizekit.core.NativeAdAppearance
 
 /**
  * A deliberately small consumer application compiled with R8. It represents a host that ships
@@ -16,6 +17,12 @@ import ua.lujek.monetizekit.core.MonetizeKit
 class ConsumerSmokeApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        val nativeAppearance = NativeAdAppearance()
+        val placements = ConsumerSmokePlacements(
+            nativeReservedHeightDp = nativeAppearance.minimumReservedHeightDp(
+                resources.configuration.fontScale,
+            ),
+        )
 
         MonetizeKit.initialize(this) {
             direct {
@@ -28,38 +35,39 @@ class ConsumerSmokeApplication : Application() {
                 }
             }
 
-            banner(ConsumerSmokePlacements.banner) {
+            nativeAppearance(nativeAppearance)
+            banner(placements.banner) {
                 admob(ADMOB_BANNER_AD_UNIT)
                 meta(META_BANNER_PLACEMENT)
                 unity(UNITY_BANNER_PLACEMENT)
             }
-            native(ConsumerSmokePlacements.native) {
+            native(placements.native) {
                 admob(ADMOB_NATIVE_AD_UNIT)
                 meta(META_NATIVE_PLACEMENT)
             }
-            interstitial(ConsumerSmokePlacements.interstitial) {
+            interstitial(placements.interstitial) {
                 admob(ADMOB_INTERSTITIAL_AD_UNIT)
                 meta(META_INTERSTITIAL_PLACEMENT)
                 unity(UNITY_INTERSTITIAL_PLACEMENT)
             }
-            rewarded(ConsumerSmokePlacements.rewarded) {
+            rewarded(placements.rewarded) {
                 admob(ADMOB_REWARDED_AD_UNIT)
                 meta(META_REWARDED_PLACEMENT)
                 unity(UNITY_REWARDED_PLACEMENT)
             }
-            rewardedInterstitial(ConsumerSmokePlacements.rewardedInterstitial) {
+            rewardedInterstitial(placements.rewardedInterstitial) {
                 admob(ADMOB_REWARDED_INTERSTITIAL_AD_UNIT)
             }
-            appOpen(ConsumerSmokePlacements.appOpen) {
+            appOpen(placements.appOpen) {
                 admob(ADMOB_APP_OPEN_AD_UNIT)
             }
         }
     }
 }
 
-private object ConsumerSmokePlacements {
+private class ConsumerSmokePlacements(nativeReservedHeightDp: Int) {
     val banner = AdsPlacements.banner(id = "consumer_banner", reservedHeightDp = 50)
-    val native = AdsPlacements.native(id = "consumer_native", reservedHeightDp = 280)
+    val native = AdsPlacements.native(id = "consumer_native", reservedHeightDp = nativeReservedHeightDp)
     val interstitial = AdsPlacements.interstitial(id = "consumer_interstitial")
     val rewarded = AdsPlacements.rewarded(id = "consumer_rewarded")
     val rewardedInterstitial = AdsPlacements.rewardedInterstitial(id = "consumer_rewarded_interstitial")

@@ -425,22 +425,65 @@ enabled. `MonetizeKit` validates the match at runtime.
 
 ## Define placements
 
-Declare placements as application-owned constants. A network ID never appears in UI code.
+Declare placements as application-owned values. A network ID never appears in UI code. Create the
+native placement with the current system font scale, not with a fixed 1.0-scale value.
 
 ```kotlin
 object AppAds {
+    val nativeAppearance = NativeAdAppearance()
     val homeBanner = AdsPlacements.banner("home_banner", reservedHeightDp = 74)
-    val articleNative = AdsPlacements.native("article_native", reservedHeightDp = 280)
+    lateinit var articleNative: NativePlacement
+        private set
     val levelComplete = AdsPlacements.interstitial("level_complete")
     val rewardCoins = AdsPlacements.rewarded("reward_coins")
     val levelBonus = AdsPlacements.rewardedInterstitial("level_bonus")
     val appReturn = AdsPlacements.appOpen("app_return")
+
+    fun configure(fontScale: Float) {
+        articleNative = AdsPlacements.native(
+            "article_native",
+            reservedHeightDp = nativeAppearance.minimumReservedHeightDp(fontScale),
+        )
+    }
 }
 ```
 
 `reservedHeightDp` is mandatory for banner and native placements. The container retains this height
 while an ad loads, fails, or is unavailable, so content does not jump. It becomes zero only when
 the configured access policy explicitly suppresses ads, such as after an active paid entitlement.
+
+The built-in native card requires `NativeAdAppearance.minimumReservedHeightDp` (448dp with the
+default appearance at font scale 1.0), not an arbitrary 280dp. When placements are created from
+`Application`, pass the actual system font scale and the **same appearance** to `initialize`:
+
+```kotlin
+val nativeAppearance = NativeAdAppearance(mediaHeightDp = 180)
+val articleNative = AdsPlacements.native(
+    id = "article_native",
+    reservedHeightDp = nativeAppearance.minimumReservedHeightDp(
+        resources.configuration.fontScale,
+    ),
+)
+
+MonetizeKit.initialize(this) {
+    nativeAppearance(nativeAppearance)
+    // Configure articleNative here.
+}
+```
+
+Call `AppAds.configure(resources.configuration.fontScale)` in `Application.onCreate`, before using
+`AppAds.articleNative` in either initialization mode. Configure the same appearance there:
+
+```kotlin
+AppAds.configure(resources.configuration.fontScale)
+MonetizeKit.initialize(this) {
+    nativeAppearance(AppAds.nativeAppearance)
+    // direct { ... } or admobMediation { ... }
+}
+```
+
+MonetizeKit rejects an undersized placement that uses the built-in renderer during initialization,
+instead of clipping the creative. A placement with a custom `NativeAdRenderer` owns its own height.
 
 ### Supported formats
 
@@ -468,8 +511,10 @@ replaces an already rendered banner/native ad and never triggers a second fullsc
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        AppAds.configure(resources.configuration.fontScale)
 
         MonetizeKit.initialize(this) {
+            nativeAppearance(AppAds.nativeAppearance)
             direct {
                 admob {
                     applicationId = "ca-app-pub-xxxxxxxxxxxxxxxx~yyyyyyyyyy"
@@ -549,7 +594,9 @@ contains the **real AdMob ad unit ID** that is attached to that mediation group;
 units can serve Google ads only and can never reach the Meta or Unity mapping.
 
 ```kotlin
+AppAds.configure(resources.configuration.fontScale)
 MonetizeKit.initialize(this) {
+    nativeAppearance(AppAds.nativeAppearance)
     admobMediation {
         applicationId = "ca-app-pub-xxxxxxxxxxxxxxxx~yyyyyyyyyy"
         testing(enabled = BuildConfig.DEBUG) {
@@ -603,6 +650,11 @@ Before release, publish a GDPR message in **AdMob → Privacy & messaging** and 
 partner, including Meta and Unity. This applies to direct mode as well: UMP creates the TCF and
 Additional Consent signals consumed by ad partners. Confirm the exact production consent setup for
 your Meta account with your Meta representative.
+
+The automated suite verifies MonetizeKit's UMP gateway configuration, reset, and Privacy Options
+routing with a deterministic fake. It cannot download or render your account's remote UMP message.
+Before release, manually validate a published message with an actual UMP test-device hash and forced
+EEA geography, then open Privacy Options and reset the consent state.
 
 Expose privacy options in app settings when `MonetizeKit.gdpr` says they are required:
 
@@ -778,7 +830,8 @@ Set `nativeAppearance(...)` once inside `initialize` to override the built-in ca
 a renderer. All colors are Android ARGB integers; all dimensions are dp except text sizes, which
 are sp. This setting affects every native card created by a built-in adapter, including native
 creative returned by AdMob Mediation. It has no effect on a placement that supplies a custom
-`NativeAdRenderer`.
+`NativeAdRenderer`. Calculate the native placement reservation from this same instance as shown
+above, especially after changing `mediaHeightDp` or supporting larger font scales.
 
 ```kotlin
 import android.graphics.Color
@@ -1177,32 +1230,37 @@ a certified CMP and must never be copied into production.
 ### R8 consumer smoke test
 
 `:consumer-r8-smoke` is an internal application that links the direct AdMob, Meta, Unity and the
-official Meta/Unity AdMob-mediation adapters exactly as a host app would. It has no launcher
-activity, is never installed by CI, and uses public demo/placeholder IDs solely to keep the
-consumer configuration reachable by R8. CI also inspects the shrinked APK and fails unless
+official Meta/Unity AdMob-mediation adapters exactly as a host app would. It uses a test-only
+activity, is installed by CI after R8 shrinking, and uses public demo/placeholder IDs solely to
+keep the consumer configuration reachable by R8. CI also inspects the shrinked APK and fails unless
 `FacebookMediationAdapter`, `UnityMediationAdapter`, and MonetizeKit's Meta-mediation initializer
 are retained.
 
 ```shell
-./gradlew :ads-core:testDebugUnitTest :consumer-r8-smoke:assembleRelease
+./gradlew testDebugUnitTest :consumer-r8-smoke:assembleRelease :consumer-r8-smoke:analyzeReleaseR8Config
 ```
 
 ### Android behavior test matrix
 
-With an Android device or emulator connected, run:
+With an Android device or emulator connected, run the same verified runner used by GitHub Actions:
 
 ```shell
-./gradlew :ads-core:connectedDebugAndroidTest
+bash scripts/ci/run-instrumented-tests.sh
 ```
 
-The device suite uses deterministic fake adapters and consent provider. It covers the external
-consent and Privacy Options flow, banner creation before consent versus native creation after the
-SDK is ready, inline pause/resume/destroy forwarding, and persisted DataStore frequency-cap
-history. Core unit tests additionally verify same-placement concurrent `show()` serialization and
-that a retry waits then performs the next actual preload attempt.
+The script builds and installs every test APK, then accepts only a complete successful
+`AndroidJUnitRunner` result with the expected test count. The device suite uses deterministic fake adapters and consent provider. It covers the UMP gateway
+configuration (including EEA debug geography), Privacy Options routing and reset, external consent,
+banner creation before consent versus native creation after the SDK is ready, Compose inline-view
+creation/release, inline pause/resume/destroy forwarding, Google Play Billing callback contracts,
+and persisted DataStore frequency-cap history. Core unit tests additionally verify same-placement
+concurrent `show()` serialization and that a retry waits then performs the next actual preload
+attempt.
 
 `assembleRelease` produces a shrinked APK and verifies merged adapter providers plus every
-library's consumer ProGuard rules. The same command runs in GitHub Actions on push and pull request.
+library's consumer ProGuard rules. The script and CI also install and start that minified APK. The R8 analyzer
+checks code shrinking rules; resource shrinking is intentionally outside this smoke test. The same
+matrix runs in GitHub Actions on push and pull request.
 
 - Configure and publish the UMP privacy message and partner list.
 - Use either `direct { ... }` or `admobMediation { ... }`, never both.
@@ -1215,3 +1273,9 @@ library's consumer ProGuard rules. The same command runs in GitHub Actions on pu
 - If billing controls ad access, verify and grant purchases on a secure backend before returning `Verified`.
 - Confirm a `pro_app` purchase grants every expected entitlement and only the configured ad-free
   entitlement suppresses advertising.
+
+## License
+
+Copyright 2026 lUjek-Sh.
+
+MonetizeKit is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for the original author attribution. When redistributing the library or a derivative work, retain both files and their notices.

@@ -430,16 +430,26 @@ Google Mobile Ads та UMP потребують AdMob Application ID, навіт
 
 ## Оголосіть placement-и
 
-Placement-и належать застосунку. Network ID не повинен потрапляти у UI-код.
+Placement-и належать застосунку. Network ID не повинен потрапляти у UI-код. Створюйте native
+placement з поточним системним font scale, а не з фіксованим значенням для масштабу 1.0.
 
 ```kotlin
 object AppAds {
+    val nativeAppearance = NativeAdAppearance()
     val homeBanner = AdsPlacements.banner("home_banner", reservedHeightDp = 74)
-    val articleNative = AdsPlacements.native("article_native", reservedHeightDp = 280)
+    lateinit var articleNative: NativePlacement
+        private set
     val levelComplete = AdsPlacements.interstitial("level_complete")
     val rewardCoins = AdsPlacements.rewarded("reward_coins")
     val levelBonus = AdsPlacements.rewardedInterstitial("level_bonus")
     val appReturn = AdsPlacements.appOpen("app_return")
+
+    fun configure(fontScale: Float) {
+        articleNative = AdsPlacements.native(
+            "article_native",
+            reservedHeightDp = nativeAppearance.minimumReservedHeightDp(fontScale),
+        )
+    }
 }
 ```
 
@@ -447,6 +457,40 @@ object AppAds {
 завантажується, не заповнюється або недоступна, тому контент екрана не стрибає. Висота стає нульовою
 лише тоді, коли налаштована access policy явно вимикає рекламу, наприклад після активного paid
 entitlement-а.
+
+Вбудована native-картка потребує `NativeAdAppearance.minimumReservedHeightDp` (448dp для
+стандартного вигляду при font scale 1.0), а не довільних 280dp. Якщо placement-и створюються в
+`Application`, передавайте фактичний системний font scale і **той самий appearance** в `initialize`:
+
+```kotlin
+val nativeAppearance = NativeAdAppearance(mediaHeightDp = 180)
+val articleNative = AdsPlacements.native(
+    id = "article_native",
+    reservedHeightDp = nativeAppearance.minimumReservedHeightDp(
+        resources.configuration.fontScale,
+    ),
+)
+
+MonetizeKit.initialize(this) {
+    nativeAppearance(nativeAppearance)
+    // Налаштуйте articleNative тут.
+}
+```
+
+Викличте `AppAds.configure(resources.configuration.fontScale)` у `Application.onCreate` до
+використання `AppAds.articleNative` в будь-якому режимі ініціалізації. Там само налаштуйте той
+самий appearance:
+
+```kotlin
+AppAds.configure(resources.configuration.fontScale)
+MonetizeKit.initialize(this) {
+    nativeAppearance(AppAds.nativeAppearance)
+    // direct { ... } або admobMediation { ... }
+}
+```
+
+MonetizeKit відхилить placement із недостатньою висотою для вбудованого renderer-а під час
+ініціалізації, а не обрізатиме creative. Placement із власним `NativeAdRenderer` сам керує висотою.
 
 ### Підтримувані формати
 
@@ -474,8 +518,10 @@ callback не підмінить уже відмальований banner/native
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
+        AppAds.configure(resources.configuration.fontScale)
 
         MonetizeKit.initialize(this) {
+            nativeAppearance(AppAds.nativeAppearance)
             direct {
                 admob {
                     applicationId = "ca-app-pub-xxxxxxxxxxxxxxxx~yyyyyyyyyy"
@@ -556,7 +602,9 @@ Direct-режим — це priority fallback, а не ціновий аукці�
 ad units віддають лише Google ads і ніколи не дійдуть до Meta або Unity mapping.
 
 ```kotlin
+AppAds.configure(resources.configuration.fontScale)
 MonetizeKit.initialize(this) {
+    nativeAppearance(AppAds.nativeAppearance)
     admobMediation {
         applicationId = "ca-app-pub-xxxxxxxxxxxxxxxx~yyyyyyyyyy"
         testing(enabled = BuildConfig.DEBUG) {
@@ -610,6 +658,11 @@ test device (або forced test mode) у Unity Ads dashboard; додаткови
 активних партнерів, зокрема Meta та Unity. Це також стосується direct-режиму: UMP створює TCF та
 Additional Consent сигнали для ad partners. Перевірте точне production налаштування consent для
 вашого Meta account із представником Meta.
+
+Автоматизована матриця перевіряє налаштування UMP gateway, reset і маршрутизацію Privacy Options
+через детермінований fake. Вона не може завантажити або показати віддалене UMP-повідомлення вашого
+акаунта. Перед релізом вручну перевірте опубліковане повідомлення з реальним UMP test-device hash,
+примусовою EEA geography, Privacy Options і reset consent state.
 
 Покажіть privacy options у налаштуваннях застосунку, якщо цього вимагає `MonetizeKit.gdpr`:
 
@@ -803,7 +856,8 @@ MonetizeKit.initialize(this) {
 лише потрібні властивості: решта зберігають policy-safe значення за замовчуванням. Налаштування
 впливає на всі native-картки, створені вбудованим renderer-ом, зокрема на native creative,
 отриманий через AdMob Mediation. Placement із власним `NativeAdRenderer` повністю керує своєю
-розміткою і не читає `NativeAdAppearance`.
+розміткою і не читає `NativeAdAppearance`. Резерв висоти native placement-а рахуйте з цього ж
+instance, як показано вище, особливо після зміни `mediaHeightDp` або для збільшеного font scale.
 
 ### Налаштування рамки banner
 
@@ -1184,32 +1238,37 @@ test-only UMP `reset()` перед restart, тож форму можна поб�
 ### R8 consumer smoke test
 
 `:consumer-r8-smoke` — внутрішній застосунок, який підключає direct adapters AdMob, Meta, Unity
-та офіційні Meta/Unity adapters для AdMob Mediation так само, як звичайний host app. Він не має
-launcher activity, CI його не встановлює, а public demo/placeholder ID існують лише для того, щоб
-consumer-конфігурація залишалася досяжною для R8. CI також перевіряє shrinked APK і зупиняється,
+та офіційні Meta/Unity adapters для AdMob Mediation так само, як звичайний host app. Він має
+test-only activity, CI встановлює його після R8 shrinking, а public demo/placeholder ID існують лише
+для того, щоб consumer-конфігурація залишалася досяжною для R8. CI також перевіряє shrinked APK і зупиняється,
 якщо `FacebookMediationAdapter`, `UnityMediationAdapter` або Meta-mediation initializer
 MonetizeKit не збережено.
 
 ```shell
-./gradlew :ads-core:testDebugUnitTest :consumer-r8-smoke:assembleRelease
+./gradlew testDebugUnitTest :consumer-r8-smoke:assembleRelease :consumer-r8-smoke:analyzeReleaseR8Config
 ```
 
 ### Матриця Android behavior-тестів
 
-Підключіть Android-пристрій або емулятор і виконайте:
+Підключіть Android-пристрій або емулятор і виконайте той самий перевірений runner, який використовує GitHub Actions:
 
 ```shell
-./gradlew :ads-core:connectedDebugAndroidTest
+bash scripts/ci/run-instrumented-tests.sh
 ```
 
-Device-suite використовує детерміновані fake adapter-и та consent provider. Він покриває external
-consent і Privacy Options flow, створення banner до consent та native після готовності SDK,
-передавання inline pause/resume/destroy і збереження історії frequency cap у DataStore. Core
-unit-тести додатково перевіряють серіалізацію конкурентних `show()` для одного placement та те,
-що retry очікує і виконує наступну фактичну preload-спробу.
+Скрипт збирає та встановлює кожен test APK і зараховує лише повний успішний результат
+`AndroidJUnitRunner` з очікуваною кількістю тестів. Device-suite використовує детерміновані fake adapter-и та consent provider. Він покриває
+налаштування UMP gateway (зокрема EEA debug geography), маршрутизацію Privacy Options і reset,
+external consent, створення banner до consent та native після готовності SDK, Compose
+inline-view creation/release, передавання inline pause/resume/destroy, контракти callback-ів
+Google Play Billing і збереження історії frequency cap у DataStore. Core unit-тести додатково
+перевіряють серіалізацію конкурентних `show()` для одного placement та те, що retry очікує і
+виконує наступну фактичну preload-спробу.
 
 `assembleRelease` створює shrinked APK і перевіряє merged adapter provider-и та consumer ProGuard
-rules усіх бібліотек. Та сама команда запускається у GitHub Actions для push і pull request.
+rules усіх бібліотек. Скрипт і CI також встановлюють та запускають цей minified APK. R8 analyzer перевіряє
+правила code shrinking; resource shrinking свідомо не входить до цього smoke test. Та сама матриця
+запускається у GitHub Actions для push і pull request.
 
 - Опублікуйте UMP privacy message та список ad partners.
 - Використовуйте або `direct { ... }`, або `admobMediation { ... }`, але не обидва режими.
@@ -1223,3 +1282,9 @@ rules усіх бібліотек. Та сама команда запускає
   перед поверненням `Verified`.
 - Переконайтеся, що покупка `pro_app` надає всі потрібні entitlement-и, а рекламу вимикає лише
   явно налаштований ad-free entitlement.
+
+## Ліцензія
+
+Copyright 2026 lUjek-Sh.
+
+MonetizeKit ліцензовано за [Apache License 2.0](LICENSE). Відомості про початкового автора наведені у [NOTICE](NOTICE). Під час поширення бібліотеки або похідної роботи зберігайте обидва файли та їхні повідомлення.

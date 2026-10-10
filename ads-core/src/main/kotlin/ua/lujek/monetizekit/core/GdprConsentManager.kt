@@ -48,18 +48,45 @@ internal class GdprConsentManager(
     }
 }
 
-private class UmpPrivacyConsentProvider(
+/** Internal seam for deterministic UMP-flow tests; production uses [AndroidUmpConsentGateway]. */
+internal interface UmpConsentGateway {
+    suspend fun gatherConsent(activity: Activity, configuration: GdprConfiguration): ConsentSnapshot
+
+    suspend fun showPrivacyOptions(activity: Activity): ConsentSnapshot
+
+    fun resetForTesting()
+}
+
+internal class UmpPrivacyConsentProvider(
     context: Context,
     private val configuration: GdprConfiguration,
+    private val gateway: UmpConsentGateway = AndroidUmpConsentGateway(context),
 ) : PrivacyConsentProvider {
+    override suspend fun gatherConsent(activity: Activity): ConsentSnapshot =
+        gateway.gatherConsent(activity, configuration)
+
+    override suspend fun showPrivacyOptions(activity: Activity): ConsentSnapshot =
+        gateway.showPrivacyOptions(activity)
+
+    fun resetForTesting() {
+        gateway.resetForTesting()
+    }
+}
+
+private class AndroidUmpConsentGateway(
+    context: Context,
+) : UmpConsentGateway {
     private val applicationContext = context.applicationContext
     private val consentInformation = UserMessagingPlatform.getConsentInformation(context)
 
-    override suspend fun gatherConsent(activity: Activity): ConsentSnapshot {
+    override suspend fun gatherConsent(
+        activity: Activity,
+        configuration: GdprConfiguration,
+    ): ConsentSnapshot {
         val updateError = suspendCancellableCoroutine<FormError?> { continuation ->
             consentInformation.requestConsentInfoUpdate(
                 activity,
-                consentRequestParameters(),
+                consentRequestParameters(configuration),
                 { if (continuation.isActive) continuation.resume(null) },
                 { error -> if (continuation.isActive) continuation.resume(error) },
             )
@@ -86,7 +113,7 @@ private class UmpPrivacyConsentProvider(
         return consentSnapshot(formError)
     }
 
-    fun resetForTesting() {
+    override fun resetForTesting() {
         consentInformation.reset()
     }
 
@@ -97,7 +124,7 @@ private class UmpPrivacyConsentProvider(
         error = formError?.let { error -> AdsError(message = error.message) },
     )
 
-    private fun consentRequestParameters(): ConsentRequestParameters =
+    private fun consentRequestParameters(configuration: GdprConfiguration): ConsentRequestParameters =
         ConsentRequestParameters.Builder().apply {
             configuration.underAgeOfConsent?.let(::setTagForUnderAgeOfConsent)
             configuration.debug?.let { debug ->

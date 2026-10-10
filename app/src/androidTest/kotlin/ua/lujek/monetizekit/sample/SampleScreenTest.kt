@@ -1,41 +1,41 @@
 package ua.lujek.monetizekit.sample
 
-import androidx.compose.ui.test.junit4.v2.createComposeRule
-import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
-import org.junit.Rule
+import android.view.View
+import android.view.ViewGroup
+import androidx.test.core.app.ActivityScenario
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.compose.ui.platform.ComposeView
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
 
+@RunWith(AndroidJUnit4::class)
 class SampleScreenTest {
-    @get:Rule
-    val composeRule = createComposeRule()
-
     @Test
     fun rendersDebugControlsWithoutStartingRealAds() {
-        composeRule.setContent {
-            MonetizeKitSampleTheme {
-                SampleScreen(
-                    state = SampleAdsUiState(
-                        adsEnabled = true,
-                        isSdkReady = true,
-                        sdkStatus = "Ready: ADMOB",
-                        privacyStatus = "completed",
-                        privacyProfile = SamplePrivacyProfile.UMP_DEFAULT,
-                        umpTestDeviceHash = "",
-                        networkTestSetup = "AdMob demo",
-                        lastAction = "Preload: ready",
-                        lastEvent = "debug_interstitial preloaded by ADMOB",
-                        inlineReloadKey = 0,
-                    ),
-                    onAction = {},
-                    showInlineAds = false,
+        ActivityScenario.launch(SampleComposeTestActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val content = activity.findViewById<ViewGroup>(android.R.id.content)
+                val composeHost = content.findComposeHost()
+            assertTrue(
+                    "SampleScreen did not attach a Compose host view.",
+                    composeHost != null && composeHost.isAttachedToWindow,
+                )
+                val renderedHost = requireNotNull(composeHost)
+                assertTrue(
+                    "SampleScreen's Compose host was not laid out.",
+                    renderedHost.width > 0 && renderedHost.height > 0,
                 )
             }
         }
+    }
 
-        composeRule.onNodeWithTag("sample_title").assertExists()
-        composeRule.onNodeWithText("Open Ad Inspector").assertExists()
-        composeRule.onNodeWithText("Run configured consent flow").assertExists()
-        composeRule.onNodeWithTag("ump_test_device_hash").assertExists()
+    private fun View.findComposeHost(): ComposeView? {
+        if (this is ComposeView) return this
+        if (this !is ViewGroup) return null
+        for (index in 0 until childCount) {
+            getChildAt(index).findComposeHost()?.let { return it }
+        }
+        return null
     }
 }

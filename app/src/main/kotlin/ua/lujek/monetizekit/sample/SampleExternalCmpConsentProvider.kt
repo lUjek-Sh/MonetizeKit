@@ -2,6 +2,7 @@ package ua.lujek.monetizekit.sample
 
 import android.app.Activity
 import android.content.Context
+import androidx.core.content.edit
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,7 +31,7 @@ internal class SampleExternalCmpConsentProvider(context: Context) : PrivacyConse
         SampleExternalCmpDialogController.request(SampleExternalCmpRequest.PRIVACY_OPTIONS, ::storeDecision)
 
     private fun storeDecision(allowed: Boolean): ConsentSnapshot {
-        preferences.edit().putBoolean(consentGrantedKey, allowed).apply()
+        preferences.edit { putBoolean(consentGrantedKey, allowed) }
         return currentSnapshot()
     }
 
