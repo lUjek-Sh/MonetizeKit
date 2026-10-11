@@ -165,20 +165,46 @@ class AdsConfigurationTest {
     }
 
     @Test
-    fun `default native appearance reserves enough vertical space for every built-in asset`() {
-        val appearance = NativeAdAppearance()
+    fun `native appearance reserves enough vertical space for selected built-in assets`() {
+        val appearance = NativeAdAppearance(
+            mediaHeightDp = 180,
+            headlineMaxLines = 2,
+            showAdvertiser = true,
+            showCallToAction = true,
+        )
 
         assertEquals(448, appearance.minimumReservedHeightDp)
         assertEquals(
             468,
-            NativeAdAppearance(mediaHeightDp = 200).minimumReservedHeightDp,
+            appearance.copy(mediaHeightDp = 200).minimumReservedHeightDp,
         )
         assertEquals(487, appearance.minimumReservedHeightDp(fontScale = 1.3f))
+        assertEquals(311, NativeAdAppearance().minimumReservedHeightDp)
+        assertEquals(331, NativeAdAppearance().minimumReservedHeightDp(fontScale = 1.3f))
+    }
+
+    @Test
+    fun `compact native appearance reserves space only for visible assets`() {
+        val fullCard = NativeAdAppearance(
+            mediaHeightDp = 180,
+            headlineMaxLines = 2,
+            showAdvertiser = true,
+            showCallToAction = true,
+        )
+        val compactCard = NativeAdAppearance()
+
+        assertTrue(compactCard.minimumReservedHeightDp < fullCard.minimumReservedHeightDp)
+        assertEquals(311, compactCard.minimumReservedHeightDp)
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `native minimum reservation rejects invalid font scale`() {
         NativeAdAppearance().minimumReservedHeightDp(fontScale = 0f)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `native appearance rejects an empty headline`() {
+        NativeAdAppearance(headlineMaxLines = 0)
     }
 
     @Test

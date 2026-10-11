@@ -220,12 +220,14 @@ object AppAds {
 лише тоді, коли налаштована access policy явно вимикає рекламу, наприклад після активного paid
 entitlement-а.
 
-Вбудована native-картка потребує `NativeAdAppearance.minimumReservedHeightDp` (448dp для
-стандартного вигляду при font scale 1.0), а не довільних 280dp. Якщо placement-и створюються в
-`Application`, передавайте фактичний системний font scale і **той самий appearance** в `initialize`:
+Стандартна вбудована native-картка компактна й потребує
+`NativeAdAppearance.minimumReservedHeightDp` (311dp при font scale 1.0), а не довільних 280dp.
+Вона використовує MediaView висотою 120dp, однорядковий headline та не показує advertiser і CTA.
+Якщо placement-и створюються в `Application`, передавайте фактичний системний font scale і **той
+самий appearance** в `initialize`:
 
 ```kotlin
-val nativeAppearance = NativeAdAppearance(mediaHeightDp = 180)
+val nativeAppearance = NativeAdAppearance()
 val articleNative = AdsPlacements.native(
     id = "article_native",
     reservedHeightDp = nativeAppearance.minimumReservedHeightDp(
@@ -604,6 +606,10 @@ MonetizeKit.initialize(this) {
             iconContainerColor = 0xFF5B3DA9.toInt(),
             mediaPlaceholderColor = 0xFF121218.toInt(),
             callToActionColor = 0xFF714ECF.toInt(),
+            mediaHeightDp = 120,
+            headlineMaxLines = 1,
+            showAdvertiser = false,
+            showCallToAction = false,
             contentPaddingDp = 14,
             cardCornerRadiusDp = 20,
             headlineTextSizeSp = 18f,
@@ -620,6 +626,12 @@ MonetizeKit.initialize(this) {
 отриманий через AdMob Mediation. Placement із власним `NativeAdRenderer` повністю керує своєю
 розміткою і не читає `NativeAdAppearance`. Резерв висоти native placement-а рахуйте з цього ж
 instance, як показано вище, особливо після зміни `mediaHeightDp` або для збільшеного font scale.
+
+Вбудований renderer завжди показує headline і наявний body: Google Mobile Ads вимагає показувати
+ці assets. Advertiser і CTA необов'язкові; використовуйте `showAdvertiser` та
+`showCallToAction`, щоб приховати їх. `iconContainerColor` задає фон під іконкою рекламодавця, а
+`callToActionColor` — фон CTA. Дивіться [довідник assets native ad від
+Google](https://developers.google.com/admob/android/reference/com/google/android/gms/ads/nativead/NativeAd).
 
 ### Налаштування рамки banner
 

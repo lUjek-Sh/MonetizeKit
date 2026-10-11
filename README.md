@@ -215,12 +215,14 @@ object AppAds {
 while an ad loads, fails, or is unavailable, so content does not jump. It becomes zero only when
 the configured access policy explicitly suppresses ads, such as after an active paid entitlement.
 
-The built-in native card requires `NativeAdAppearance.minimumReservedHeightDp` (448dp with the
-default appearance at font scale 1.0), not an arbitrary 280dp. When placements are created from
-`Application`, pass the actual system font scale and the **same appearance** to `initialize`:
+The default built-in native card is compact and requires
+`NativeAdAppearance.minimumReservedHeightDp` (311dp at font scale 1.0), not an arbitrary 280dp.
+It uses a 120dp MediaView, a one-line headline, and no advertiser or CTA. When placements are
+created from `Application`, pass the actual system font scale and the **same appearance** to
+`initialize`:
 
 ```kotlin
-val nativeAppearance = NativeAdAppearance(mediaHeightDp = 180)
+val nativeAppearance = NativeAdAppearance()
 val articleNative = AdsPlacements.native(
     id = "article_native",
     reservedHeightDp = nativeAppearance.minimumReservedHeightDp(
@@ -596,6 +598,12 @@ creative returned by AdMob Mediation. It has no effect on a placement that suppl
 `NativeAdRenderer`. Calculate the native placement reservation from this same instance as shown
 above, especially after changing `mediaHeightDp` or supporting larger font scales.
 
+The built-in renderer always shows the headline and any available body: Google Mobile Ads requires
+both assets to be displayed. The advertiser and CTA are optional; use `showAdvertiser` and
+`showCallToAction` to hide them. `iconContainerColor` is the background behind the advertiser
+icon, while `callToActionColor` is the CTA background. See the [Google native-ad asset
+reference](https://developers.google.com/admob/android/reference/com/google/android/gms/ads/nativead/NativeAd).
+
 ```kotlin
 import android.graphics.Color
 
@@ -609,6 +617,10 @@ MonetizeKit.initialize(this) {
             attributionBackgroundColor = Color.rgb(60, 60, 72),
             iconContainerColor = Color.rgb(91, 61, 169),
             callToActionColor = Color.rgb(113, 78, 207),
+            mediaHeightDp = 120,
+            headlineMaxLines = 1,
+            showAdvertiser = false,
+            showCallToAction = false,
             cardCornerRadiusDp = 20,
             contentPaddingDp = 14,
             iconSizeDp = 44,

@@ -4,10 +4,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.widget.TextView
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,6 +23,12 @@ class DefaultNativeAdRendererInstrumentedTest {
     @Test
     fun createsVisibleRequiredAssetsAndNonZeroMediaArea() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val appearance = NativeAdAppearance(
+            mediaHeightDp = 180,
+            headlineMaxLines = 2,
+            showAdvertiser = true,
+            showCallToAction = true,
+        )
         val binding = DefaultNativeAdRenderer.render(
             context = context,
             content = NativeAdContent(
@@ -33,10 +41,11 @@ class DefaultNativeAdRendererInstrumentedTest {
                 store = null,
                 icon = ColorDrawable(android.graphics.Color.MAGENTA),
             ),
+            appearance = appearance,
         )
 
         val width = context.dp(320)
-        val height = context.dp(NativeAdAppearance().minimumReservedHeightDp)
+        val height = context.dp(appearance.minimumReservedHeightDp)
         binding.root.measure(
             View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
@@ -85,6 +94,51 @@ class DefaultNativeAdRendererInstrumentedTest {
         assertEquals(null, binding.advertiserView)
         assertEquals(null, binding.iconView)
         assertTrue(binding.root is ViewGroup)
+    }
+
+    @Test
+    fun rendersCompactCardWithConfiguredMediaAndIconBackground() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val iconColor = 0xFF123456.toInt()
+        val appearance = NativeAdAppearance(
+            iconContainerColor = iconColor,
+            mediaHeightDp = 120,
+            headlineMaxLines = 1,
+            showAdvertiser = false,
+            showCallToAction = false,
+        )
+        val binding = DefaultNativeAdRenderer.render(
+            context = context,
+            content = NativeAdContent(
+                network = AdsNetwork.ADMOB,
+                headline = "Example headline",
+                body = "Example body",
+                callToAction = "Install",
+                advertiser = "Example advertiser",
+                price = null,
+                store = null,
+                icon = ColorDrawable(android.graphics.Color.MAGENTA),
+            ),
+            appearance = appearance,
+        )
+
+        val width = context.dp(320)
+        val height = context.dp(appearance.minimumReservedHeightDp)
+        binding.root.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
+        )
+        binding.root.layout(0, 0, width, height)
+
+        assertEquals(1, (binding.headlineView as TextView).maxLines)
+        assertNull(binding.advertiserView)
+        assertNotNull(binding.bodyView)
+        assertNull(binding.callToActionView)
+        val mediaContainer = requireNotNull(binding.mediaContainer)
+        assertEquals(context.dp(120), mediaContainer.height)
+        val iconBackground = requireNotNull(binding.iconView).background as GradientDrawable
+        assertEquals(iconColor, iconBackground.color?.defaultColor)
+        assertTrue(mediaContainer.bottom <= binding.root.height)
     }
 
     private fun android.content.Context.dp(value: Int): Int =

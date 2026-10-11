@@ -63,8 +63,10 @@ data class NativeAdAppearance(
     val secondaryTextColor: Int = 0xFFCFCAD6.toInt(),
     val attributionBackgroundColor: Int = 0xFF3A3A44.toInt(),
     val attributionTextColor: Int = 0xFFEEEBF2.toInt(),
+    /** Background behind the advertiser icon. */
     val iconContainerColor: Int = 0xFF5B3DA9.toInt(),
     val mediaPlaceholderColor: Int = 0xFF121218.toInt(),
+    /** Background of the optional call-to-action button. */
     val callToActionColor: Int = 0xFF714ECF.toInt(),
     val contentPaddingDp: Int = 14,
     val itemSpacingDp: Int = 12,
@@ -82,7 +84,7 @@ data class NativeAdAppearance(
     val attributionVerticalPaddingDp: Int = 2,
     val attributionCornerRadiusDp: Int = 7,
     /** Fixed height of the SDK-owned MediaView. */
-    val mediaHeightDp: Int = 180,
+    val mediaHeightDp: Int = 120,
     val callToActionMinHeightDp: Int = 40,
     val callToActionHorizontalPaddingDp: Int = 12,
     val callToActionVerticalPaddingDp: Int = 8,
@@ -90,6 +92,15 @@ data class NativeAdAppearance(
     val headlineTextSizeSp: Float = 18f,
     val secondaryTextSizeSp: Float = 14f,
     val callToActionTextSizeSp: Float = 14f,
+    /**
+     * The native headline is required by Google Mobile Ads and therefore cannot be hidden by the
+     * built-in renderer. Use one line to make a compact card.
+     */
+    val headlineMaxLines: Int = 1,
+    /** Whether the optional advertiser line is displayed below the headline. */
+    val showAdvertiser: Boolean = false,
+    /** Whether the optional native ad call-to-action button is displayed. */
+    val showCallToAction: Boolean = false,
 ) {
     init {
         require(contentPaddingDp >= 0) { "Native card contentPaddingDp must not be negative." }
@@ -109,6 +120,7 @@ data class NativeAdAppearance(
         }
         require(attributionCornerRadiusDp >= 0) { "Native card attributionCornerRadiusDp must not be negative." }
         require(mediaHeightDp > 0) { "Native card media height must be greater than zero." }
+        require(headlineMaxLines > 0) { "Native card headlineMaxLines must be greater than zero." }
         require(callToActionMinHeightDp > 0) { "Native card callToActionMinHeightDp must be greater than zero." }
         require(callToActionHorizontalPaddingDp >= 0 && callToActionVerticalPaddingDp >= 0) {
             "Native card call-to-action padding must not be negative."
@@ -121,7 +133,8 @@ data class NativeAdAppearance(
 
     /**
      * Minimum native placement reservation for the built-in renderer when every supported asset
-     * is present: two-line headline, advertiser, three-line body, CTA, and [mediaHeightDp].
+     * is present: [headlineMaxLines]-line headline, optional advertiser, three-line body,
+     * optional CTA, and [mediaHeightDp].
      *
      * The value includes a small rounding allowance for Android text measurement at the default
      * font scale. Use [minimumReservedHeightDp] with the current font scale when creating a
@@ -147,9 +160,18 @@ data class NativeAdAppearance(
                 fontScale = fontScale,
             ) + attributionVerticalPaddingDp * 2,
         )
-        val headlineHeight = lineHeightDp(headlineTextSizeSp, maxLines = 2, fontScale = fontScale)
+        val headlineHeight = lineHeightDp(
+            textSizeSp = headlineTextSizeSp,
+            maxLines = headlineMaxLines,
+            fontScale = fontScale,
+        )
         val advertiserHeight = lineHeightDp(secondaryTextSizeSp, maxLines = 1, fontScale = fontScale)
-        val identityHeight = max(iconSizeDp, headlineHeight + identitySpacingDp + advertiserHeight)
+        val identityTextHeight = headlineHeight + if (showAdvertiser) {
+            identitySpacingDp + advertiserHeight
+        } else {
+            0
+        }
+        val identityHeight = max(iconSizeDp, identityTextHeight)
         val bodyHeight = lineHeightDp(secondaryTextSizeSp, maxLines = 3, fontScale = fontScale)
         val callToActionHeight = max(
             callToActionMinHeightDp,
@@ -159,15 +181,15 @@ data class NativeAdAppearance(
                 fontScale = fontScale,
             ) + callToActionVerticalPaddingDp * 2,
         )
-        return contentPaddingDp * 2 +
+        var reservedHeightDp = contentPaddingDp * 2 +
             attributionHeight +
             headerTopMarginDp +
             identityHeight +
             mediaTopMarginDp +
-            mediaHeightDp +
-            itemSpacingDp + bodyHeight +
-            itemSpacingDp + callToActionHeight +
-            TEXT_MEASUREMENT_ALLOWANCE_DP
+            mediaHeightDp
+        reservedHeightDp += itemSpacingDp + bodyHeight
+        if (showCallToAction) reservedHeightDp += itemSpacingDp + callToActionHeight
+        return reservedHeightDp + TEXT_MEASUREMENT_ALLOWANCE_DP
     }
 
     private fun lineHeightDp(textSizeSp: Float, maxLines: Int, fontScale: Float): Int =
@@ -199,24 +221,28 @@ object DefaultNativeAdRenderer : NativeAdRenderer {
         val dimensions = DefaultNativeAdDimensions(context, appearance)
         val headlineView = TextView(context).apply {
             text = content.headline
-            maxLines = 2
+            maxLines = appearance.headlineMaxLines
             ellipsize = TextUtils.TruncateAt.END
             setTextColor(appearance.primaryTextColor)
             setTextSize(appearance.headlineTextSizeSp)
             setTypeface(Typeface.DEFAULT, Typeface.BOLD)
         }
-        val advertiserView = content.advertiser
-            ?.takeIf(String::isNotBlank)
-            ?.takeUnless { it == content.headline }
-            ?.let { advertiser ->
-                TextView(context).apply {
-                    text = advertiser
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(appearance.secondaryTextColor)
-                    setTextSize(appearance.secondaryTextSizeSp)
+        val advertiserView = if (appearance.showAdvertiser) {
+            content.advertiser
+                ?.takeIf(String::isNotBlank)
+                ?.takeUnless { it == content.headline }
+                ?.let { advertiser ->
+                    TextView(context).apply {
+                        text = advertiser
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        setTextColor(appearance.secondaryTextColor)
+                        setTextSize(appearance.secondaryTextSizeSp)
+                    }
                 }
-            }
+        } else {
+            null
+        }
         val bodyView = content.body?.takeIf(String::isNotBlank)?.let { body ->
             TextView(context).apply {
                 text = body
@@ -226,24 +252,28 @@ object DefaultNativeAdRenderer : NativeAdRenderer {
                 setTextSize(appearance.secondaryTextSizeSp)
             }
         }
-        val callToActionView = content.callToAction?.takeIf(String::isNotBlank)?.let { callToAction ->
-            TextView(context).apply {
-                text = callToAction
-                gravity = android.view.Gravity.CENTER
-                minHeight = dimensions.callToActionMinHeight
-                setPadding(
-                    dimensions.callToActionHorizontalPadding,
-                    dimensions.callToActionVerticalPadding,
-                    dimensions.callToActionHorizontalPadding,
-                    dimensions.callToActionVerticalPadding,
-                )
-                setTextColor(0xFFFFFFFF.toInt())
-                setTextSize(appearance.callToActionTextSizeSp)
-                background = GradientDrawable().apply {
-                    setColor(appearance.callToActionColor)
-                    cornerRadius = dimensions.callToActionCornerRadius.toFloat()
+        val callToActionView = if (appearance.showCallToAction) {
+            content.callToAction?.takeIf(String::isNotBlank)?.let { callToAction ->
+                TextView(context).apply {
+                    text = callToAction
+                    gravity = android.view.Gravity.CENTER
+                    minHeight = dimensions.callToActionMinHeight
+                    setPadding(
+                        dimensions.callToActionHorizontalPadding,
+                        dimensions.callToActionVerticalPadding,
+                        dimensions.callToActionHorizontalPadding,
+                        dimensions.callToActionVerticalPadding,
+                    )
+                    setTextColor(0xFFFFFFFF.toInt())
+                    setTextSize(appearance.callToActionTextSizeSp)
+                    background = GradientDrawable().apply {
+                        setColor(appearance.callToActionColor)
+                        cornerRadius = dimensions.callToActionCornerRadius.toFloat()
+                    }
                 }
             }
+        } else {
+            null
         }
         val iconView = content.icon?.let { icon ->
             ImageView(context).apply {
