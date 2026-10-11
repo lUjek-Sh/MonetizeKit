@@ -22,6 +22,7 @@ android {
 
 dependencies {
     api(libs.kotlinx.coroutines.core)
+    api(libs.androidx.core.splashscreen)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.koin.core)
     implementation(libs.google.ump)

@@ -817,10 +817,12 @@ lifecycleScope.launch {
 
 ### App Open
 
-`appOpen(...)` automatically preloads after consent and, by default, shows one creative when the
-app next returns to the foreground. It intentionally skips the first cold start, never overlaps
-another fullscreen format, uses the same frequency-cap/retry policy, and reloads after a show.
-Only one automatic App Open placement may be configured.
+`appOpen(...)` automatically preloads after consent and, by default, shows one already-cached
+creative when the app next returns to the foreground. It intentionally skips the first cold
+start, never overlaps another fullscreen format, uses the same frequency-cap/retry policy, and
+reloads after a show. A foreground return never waits for a network response: if the creative is
+not ready before the Activity becomes interactive, MonetizeKit skips that return and keeps loading
+for the next one. Only one automatic App Open placement may be configured.
 
 ```kotlin
 appOpen(
@@ -836,6 +838,52 @@ appOpen(
     admob("ca-app-pub-xxxxxxxxxxxxxxxx/666")
 }
 ```
+
+To show an App Open ad on a cold start, retain the system splash screen. This prevents a late
+creative from covering a ready Compose screen. Add `showOnColdStart` and a short timeout:
+
+```kotlin
+appOpen(
+    placement = AppAds.appReturn,
+    policy = AppOpenPlacementPolicy(
+        showOnAppForeground = true,
+        showOnColdStart = true,
+        coldStartTimeoutMillis = 4_000L,
+    ),
+) {
+    admob("ca-app-pub-xxxxxxxxxxxxxxxx/666")
+}
+```
+
+Then bind the splash screen before the Activity renders content:
+
+```kotlin
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+
+override fun onCreate(savedInstanceState: Bundle?) {
+    val splashScreen = installSplashScreen()
+    MonetizeKit.bindColdStartSplashScreen(splashScreen)
+    super.onCreate(savedInstanceState)
+    // setContent { ... }
+}
+```
+
+Use an AndroidX splash theme for that launcher Activity:
+
+```xml
+<style name="Theme.App.Starting" parent="Theme.SplashScreen">
+    <item name="windowSplashScreenBackground">@color/launch_background</item>
+    <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+    <item name="postSplashScreenTheme">@style/Theme.App</item>
+</style>
+
+<!-- AndroidManifest.xml -->
+<activity android:name=".MainActivity" android:theme="@style/Theme.App.Starting" />
+```
+
+The splash is released after dismissal, a final preload/consent failure, or the timeout. If it
+releases first, the late creative is cached for a later foreground return and is never shown over
+interactive cold-start content.
 
 Set `showOnAppForeground = false` to manage timing yourself, then call
 `MonetizeKit.preload(AppAds.appReturn)` and `MonetizeKit.show(activity, AppAds.appReturn)` from a

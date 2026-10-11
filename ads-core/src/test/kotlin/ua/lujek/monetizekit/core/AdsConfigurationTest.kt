@@ -300,8 +300,9 @@ class AdsConfigurationTest {
     @Test
     fun `rewarded interstitial and App Open keep their typed configuration`() {
         val policy = AppOpenPlacementPolicy(
-            showOnAppForeground = false,
+            showOnAppForeground = true,
             showOnColdStart = true,
+            coldStartTimeoutMillis = 3_500L,
             fullscreenPolicy = FullscreenPlacementPolicy(
                 frequencyCap = FullscreenFrequencyCap(cooldownMillis = 60_000L),
             ),
@@ -323,6 +324,7 @@ class AdsConfigurationTest {
         assertEquals(AdFormat.REWARDED_INTERSTITIAL, levelBonus.format)
         assertEquals(AdFormat.APP_OPEN, appReturn.format)
         assertSame(policy, configuration.placements.getValue(appReturn.id).appOpenPolicy)
+        assertEquals(3_500L, policy.coldStartTimeoutMillis)
         assertEquals(
             policy.fullscreenPolicy,
             configuration.placements.getValue(appReturn.id).fullscreenPolicy,
@@ -345,6 +347,27 @@ class AdsConfigurationTest {
                 admob("ca-app-pub-123456789/222222222")
             }
         }
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `App Open cold-start timeout must be positive`() {
+        AppOpenPlacementPolicy(coldStartTimeoutMillis = 0L)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `automatic cold-start App Open requires automatic foreground mode`() {
+        AppOpenPlacementPolicy(
+            showOnAppForeground = false,
+            showOnColdStart = true,
+        )
+    }
+
+    @Test
+    fun `cold-start splash is held only while App Open work is pending or visible`() {
+        assertFalse(AppOpenColdStartGateState.NOT_REQUIRED.keepsSystemSplashScreen)
+        assertTrue(AppOpenColdStartGateState.WAITING_FOR_AD.keepsSystemSplashScreen)
+        assertTrue(AppOpenColdStartGateState.SHOWING_AD.keepsSystemSplashScreen)
+        assertFalse(AppOpenColdStartGateState.RELEASED.keepsSystemSplashScreen)
     }
 
     @Test(expected = IllegalArgumentException::class)

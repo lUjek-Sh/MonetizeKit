@@ -7,10 +7,12 @@ import android.content.Context
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.core.splashscreen.SplashScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -110,20 +112,46 @@ object MonetizeKit {
 
     private var container: KoinApplication? = null
     private var initializationJob: Job? = null
+    private var lastStartedActivity: WeakReference<Activity>? = null
     private var lastResumedActivity: WeakReference<Activity>? = null
     private var consentLifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
     private var appOpenActivityLifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
     private var appOpenLifecycleObserver: DefaultLifecycleObserver? = null
     private var automaticConsentRequestStarted = false
     private var hasEnteredProcessForeground = false
-    private var automaticAppOpenPending = false
+    private var automaticAppOpenTrigger: AutomaticAppOpenTrigger? = null
     private var automaticAppOpenShowRunning = false
+    private var coldStartSplashScreenBound = false
+    private var coldStartTimeoutJob: Job? = null
+    private val mutableColdStartGateState = MutableStateFlow(AppOpenColdStartGateState.NOT_REQUIRED)
     private val adapterEventReporter = AdsEventReporter { event -> mutableEvents.tryEmit(event) }
 
     val state: StateFlow<MonetizeKitState> = mutableState.asStateFlow()
     val events: SharedFlow<AdsEvent> = mutableEvents.asSharedFlow()
     val gdprConsent: StateFlow<GdprConsentState> = mutableGdprConsent.asStateFlow()
     val adsAccess: StateFlow<AdsAccess> = mutableAdsAccess.asStateFlow()
+    /**
+     * The launch-screen state for automatic App Open on a cold start.
+     *
+     * Prefer [bindColdStartSplashScreen] instead of polling this state from an Activity.
+     */
+    val coldStartGateState: StateFlow<AppOpenColdStartGateState> = mutableColdStartGateState.asStateFlow()
+
+    /**
+     * Connects automatic cold-start App Open presentation to AndroidX SplashScreen.
+     *
+     * Call this immediately after `installSplashScreen()` and before the Activity renders content.
+     * It is a no-op when no automatic App Open placement has `showOnColdStart = true`.
+     */
+    @JvmStatic
+    fun bindColdStartSplashScreen(splashScreen: SplashScreen) {
+        synchronized(lock) {
+            coldStartSplashScreenBound = true
+        }
+        splashScreen.setKeepOnScreenCondition {
+            coldStartGateState.value.keepsSystemSplashScreen
+        }
+    }
 
     /** Called automatically by an included network module. Host apps should not need this method. */
     @JvmStatic
@@ -190,6 +218,14 @@ object MonetizeKit {
             )
 
             mutableAdsAccess.value = configuration.adsAccessProvider.access.value
+            mutableColdStartGateState.value = configuration.automaticAppOpenPlacement()
+                ?.appOpenPolicy
+                ?.takeIf(AppOpenPlacementPolicy::showOnColdStart)
+                ?.let { AppOpenColdStartGateState.WAITING_FOR_AD }
+                ?: AppOpenColdStartGateState.NOT_REQUIRED
+            if (!isAdsAllowed() && mutableColdStartGateState.value == AppOpenColdStartGateState.WAITING_FOR_AD) {
+                mutableColdStartGateState.value = AppOpenColdStartGateState.RELEASED
+            }
 
             container = koinApplication {
                 modules(
@@ -239,6 +275,7 @@ object MonetizeKit {
             startAdaptersIfAllowed(activity.application, runtime)
         } else {
             mutableState.value = MonetizeKitState.GdprConsentRequired
+            cancelAutomaticColdStart()
         }
         snapshot
     }
@@ -280,7 +317,7 @@ object MonetizeKit {
         activity: Activity,
         placement: InterstitialPlacement,
     ): AdShowResult = fullscreenOperations.show(placement.id) {
-            showInternal(activity, placement) {}
+            showInternal(activity = activity, placement = placement, onReward = {})
     }
 
     suspend fun show(
@@ -304,7 +341,7 @@ object MonetizeKit {
         activity: Activity,
         placement: AppOpenPlacement,
     ): AdShowResult = fullscreenOperations.show(placement.id) {
-        showInternal(activity, placement) {}
+        showInternal(activity = activity, placement = placement, onReward = {})
     }
 
     /**
@@ -442,8 +479,10 @@ object MonetizeKit {
         if (!isAdsAllowed()) {
             runtime.adapters.values.forEach(AdsNetworkAdapter::clearFullscreenCache)
             mutableState.value = MonetizeKitState.AdsSuppressed
+            releaseColdStartGate()
         } else if (runtime.readyNetworks.isEmpty()) {
             mutableState.value = MonetizeKitState.Failed(errors)
+            releaseColdStartGate()
         } else {
             mutableState.value = MonetizeKitState.Ready(runtime.readyNetworks.toSet(), errors)
             preloadConfiguredAppOpenPlacements(runtime)
@@ -531,6 +570,11 @@ object MonetizeKit {
     ) {
         if (configuration.automaticAppOpenPlacement() == null) return
         val activityCallbacks = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityStarted(activity: Activity) {
+                lastStartedActivity = WeakReference(activity)
+                maybeShowAutomaticAppOpen()
+            }
+
             override fun onActivityResumed(activity: Activity) {
                 lastResumedActivity = WeakReference(activity)
                 maybeShowAutomaticAppOpen()
@@ -540,15 +584,16 @@ object MonetizeKit {
                 if (lastResumedActivity?.get() === activity) lastResumedActivity = null
             }
 
+            override fun onActivityStopped(activity: Activity) {
+                if (lastStartedActivity?.get() === activity) lastStartedActivity = null
+            }
+
             override fun onActivityDestroyed(activity: Activity) {
                 if (lastResumedActivity?.get() === activity) lastResumedActivity = null
+                if (lastStartedActivity?.get() === activity) lastStartedActivity = null
             }
 
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
-
-            override fun onActivityStarted(activity: Activity) = Unit
-
-            override fun onActivityStopped(activity: Activity) = Unit
 
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
         }
@@ -559,9 +604,17 @@ object MonetizeKit {
                 val isFirstProcessForeground = !hasEnteredProcessForeground
                 hasEnteredProcessForeground = true
                 val policy = configuration.automaticAppOpenPlacement()?.appOpenPolicy ?: return
-                if (!isFirstProcessForeground || policy.showOnColdStart) {
-                    automaticAppOpenPending = true
-                    maybeShowAutomaticAppOpen()
+                when {
+                    isFirstProcessForeground && policy.showOnColdStart -> {
+                        automaticAppOpenTrigger = AutomaticAppOpenTrigger.COLD_START
+                        startColdStartTimeout(policy)
+                        maybeShowAutomaticAppOpen()
+                    }
+
+                    !isFirstProcessForeground -> {
+                        automaticAppOpenTrigger = AutomaticAppOpenTrigger.FOREGROUND_RETURN
+                        maybeShowAutomaticAppOpen()
+                    }
                 }
             }
         }
@@ -573,31 +626,139 @@ object MonetizeKit {
         runtime.configuration.placements.values
             .mapNotNull { definition -> definition.placement as? AppOpenPlacement }
             .forEach { placement ->
-                scope.launch { preloadWithRetryInternal(placement) }
+                scope.launch {
+                    val result = preloadWithRetryInternal(placement)
+                    onAutomaticAppOpenPreloadCompleted(placement, result)
+                }
             }
     }
 
     private fun maybeShowAutomaticAppOpen() {
-        if (!automaticAppOpenPending || automaticAppOpenShowRunning || !isAdsAllowed()) return
+        val trigger = automaticAppOpenTrigger ?: return
+        if (automaticAppOpenShowRunning || !isAdsAllowed()) return
         val runtime = currentRuntime() ?: return
         if (runtime.readyNetworks.isEmpty()) return
         val placement = runtime.configuration.automaticAppOpenPlacement()?.placement as? AppOpenPlacement ?: return
-        val activity = lastResumedActivity?.get() ?: return
-        automaticAppOpenPending = false
+        val activity = lastStartedActivity?.get() ?: return
+
+        when (
+            automaticAppOpenDecision(
+                trigger = trigger,
+                coldStartSplashScreenBound = coldStartSplashScreenBound,
+                activityIsResumed = lastResumedActivity?.get() === activity,
+                hasPreloadedCreative = placement.id in runtime.preloadedFullscreenPlacements,
+            )
+        ) {
+            AutomaticAppOpenDecision.CANCEL_COLD_START -> {
+                cancelAutomaticColdStart()
+                return
+            }
+
+            AutomaticAppOpenDecision.SKIP_FOREGROUND_RETURN -> {
+                automaticAppOpenTrigger = null
+                return
+            }
+
+            AutomaticAppOpenDecision.WAIT_FOR_PRELOAD -> return
+            AutomaticAppOpenDecision.SHOW -> Unit
+        }
+
+        automaticAppOpenTrigger = null
         automaticAppOpenShowRunning = true
+        if (trigger == AutomaticAppOpenTrigger.COLD_START) {
+            coldStartTimeoutJob?.cancel()
+            coldStartTimeoutJob = null
+            mutableColdStartGateState.value = AppOpenColdStartGateState.SHOWING_AD
+        }
         scope.launch {
             try {
-                show(activity, placement)
+                when (showPreloadedInternal(activity, placement)) {
+                    is AdShowResult.Failed -> preloadWithRetryInternal(placement)
+                    AdShowResult.Shown,
+                    AdShowResult.Suppressed,
+                    is AdShowResult.Capped,
+                    -> Unit
+                }
             } finally {
                 automaticAppOpenShowRunning = false
+                if (trigger == AutomaticAppOpenTrigger.COLD_START) releaseColdStartGate()
             }
         }
+    }
+
+    private fun onAutomaticAppOpenPreloadCompleted(
+        placement: AppOpenPlacement,
+        result: AdLoadResult,
+    ) {
+        val runtime = currentRuntime() ?: return
+        val automaticPlacement = runtime.configuration.automaticAppOpenPlacement()?.placement as? AppOpenPlacement
+            ?: return
+        if (placement.id != automaticPlacement.id) return
+
+        when (result) {
+            AdLoadResult.Loaded -> maybeShowAutomaticAppOpen()
+            is AdLoadResult.Failed,
+            AdLoadResult.Suppressed,
+            -> if (automaticAppOpenTrigger == AutomaticAppOpenTrigger.COLD_START) {
+                cancelAutomaticColdStart()
+            }
+        }
+    }
+
+    private fun startColdStartTimeout(policy: AppOpenPlacementPolicy) {
+        if (mutableColdStartGateState.value == AppOpenColdStartGateState.NOT_REQUIRED) return
+        coldStartTimeoutJob?.cancel()
+        coldStartTimeoutJob = scope.launch {
+            delay(policy.coldStartTimeoutMillis)
+            if (automaticAppOpenTrigger == AutomaticAppOpenTrigger.COLD_START) {
+                cancelAutomaticColdStart()
+            }
+        }
+    }
+
+    private fun cancelAutomaticColdStart() {
+        if (automaticAppOpenTrigger == AutomaticAppOpenTrigger.COLD_START) {
+            automaticAppOpenTrigger = null
+        }
+        releaseColdStartGate()
+    }
+
+    private fun releaseColdStartGate() {
+        coldStartTimeoutJob?.cancel()
+        coldStartTimeoutJob = null
+        when (mutableColdStartGateState.value) {
+            AppOpenColdStartGateState.WAITING_FOR_AD,
+            AppOpenColdStartGateState.SHOWING_AD,
+            -> mutableColdStartGateState.value = AppOpenColdStartGateState.RELEASED
+
+            AppOpenColdStartGateState.NOT_REQUIRED,
+            AppOpenColdStartGateState.RELEASED,
+            -> Unit
+        }
+    }
+
+    /**
+     * Automatic App Open must never turn a late network response into an unexpected fullscreen
+     * overlay. Unlike the public show API, this path presents only a creative that preload()
+     * already cached.
+     */
+    private suspend fun showPreloadedInternal(
+        activity: Activity,
+        placement: AppOpenPlacement,
+    ): AdShowResult = fullscreenOperations.show(placement.id) {
+        showInternal(
+            activity = activity,
+            placement = placement,
+            onReward = {},
+            loadBeforeShowing = false,
+        )
     }
 
     private suspend fun showInternal(
         activity: Activity,
         placement: FullscreenPlacement,
         onReward: (AdReward) -> Unit,
+        loadBeforeShowing: Boolean = true,
     ): AdShowResult = withContext(Dispatchers.Main.immediate) {
         if (!isAdsAllowed()) return@withContext AdShowResult.Suppressed
         val runtime = currentRuntime()
@@ -641,50 +802,59 @@ object MonetizeKit {
                 )
                 return@forEach
             }
-            when (
-                val loadResult = adapter.loadFullscreen(
-                    placement = placement,
-                    adUnitId = candidate.adUnitId,
-                    eventReporter = adapterEventReporter,
-                )
-            ) {
-                AdLoadResult.Loaded -> when (
-                    val showResult = adapter.showFullscreen(
-                        activity = activity,
+            if (loadBeforeShowing) {
+                when (
+                    val loadResult = adapter.loadFullscreen(
                         placement = placement,
                         adUnitId = candidate.adUnitId,
-                        onReward = onReward,
                         eventReporter = adapterEventReporter,
                     )
                 ) {
-                    AdShowResult.Shown -> {
-                        definition.fullscreenPolicy?.frequencyCap?.let { frequencyCap ->
-                            try {
-                                runtime.frequencyCapStore.recordShow(
-                                    placementId = placement.id,
-                                    frequencyCap = frequencyCap,
-                                    shownAtEpochMillis = System.currentTimeMillis(),
-                                )
-                            } catch (_: Throwable) {
-                                // Showing an ad succeeded; storage only controls future local caps.
-                            }
-                        }
-                        mutableEvents.emit(AdsEvent.AdShown(placement, candidate.network))
-                        scope.launch {
-                            preloadWithRetryInternal(placement)
-                        }
-                        return@withContext AdShowResult.Shown
+                    AdLoadResult.Loaded -> Unit
+                    is AdLoadResult.Failed -> {
+                        lastError = loadResult.error
+                        return@forEach
                     }
 
-                    is AdShowResult.Failed -> lastError = showResult.error
-                    AdShowResult.Suppressed -> return@withContext AdShowResult.Suppressed
-                    is AdShowResult.Capped -> return@withContext showResult
+                    AdLoadResult.Suppressed -> return@withContext AdShowResult.Suppressed
+                }
+            }
+
+            when (
+                val showResult = adapter.showFullscreen(
+                    activity = activity,
+                    placement = placement,
+                    adUnitId = candidate.adUnitId,
+                    onReward = onReward,
+                    eventReporter = adapterEventReporter,
+                )
+            ) {
+                AdShowResult.Shown -> {
+                    runtime.preloadedFullscreenPlacements.remove(placement.id)
+                    definition.fullscreenPolicy?.frequencyCap?.let { frequencyCap ->
+                        try {
+                            runtime.frequencyCapStore.recordShow(
+                                placementId = placement.id,
+                                frequencyCap = frequencyCap,
+                                shownAtEpochMillis = System.currentTimeMillis(),
+                            )
+                        } catch (_: Throwable) {
+                            // Showing an ad succeeded; storage only controls future local caps.
+                        }
+                    }
+                    mutableEvents.emit(AdsEvent.AdShown(placement, candidate.network))
+                    scope.launch {
+                        preloadWithRetryInternal(placement)
+                    }
+                    return@withContext AdShowResult.Shown
                 }
 
-                is AdLoadResult.Failed -> lastError = loadResult.error
-                AdLoadResult.Suppressed -> return@withContext AdShowResult.Suppressed
+                is AdShowResult.Failed -> lastError = showResult.error
+                AdShowResult.Suppressed -> return@withContext AdShowResult.Suppressed
+                is AdShowResult.Capped -> return@withContext showResult
             }
         }
+        if (!loadBeforeShowing) runtime.preloadedFullscreenPlacements.remove(placement.id)
         failShow(placement, lastError)
     }
 
@@ -709,13 +879,20 @@ object MonetizeKit {
             )
         ) {
             is FullscreenPreloadAttempt.Loaded -> {
+                currentRuntime()?.preloadedFullscreenPlacements?.add(placement.id)
                 mutableEvents.emit(AdsEvent.AdPreloaded(placement, result.network))
                 AdLoadResult.Loaded
             }
 
-            FullscreenPreloadAttempt.Suppressed -> AdLoadResult.Suppressed
+            FullscreenPreloadAttempt.Suppressed -> {
+                currentRuntime()?.preloadedFullscreenPlacements?.remove(placement.id)
+                AdLoadResult.Suppressed
+            }
 
-            is FullscreenPreloadAttempt.Failed -> failPreload(placement, result.error)
+            is FullscreenPreloadAttempt.Failed -> {
+                currentRuntime()?.preloadedFullscreenPlacements?.remove(placement.id)
+                failPreload(placement, result.error)
+            }
         }
     }
 
@@ -784,7 +961,9 @@ object MonetizeKit {
                 mutableEvents.emit(AdsEvent.AdsAccessChanged(access))
                 if (access == AdsAccess.Suppressed) {
                     runtime.adapters.values.forEach(AdsNetworkAdapter::clearFullscreenCache)
-                    automaticAppOpenPending = false
+                    runtime.preloadedFullscreenPlacements.clear()
+                    automaticAppOpenTrigger = null
+                    releaseColdStartGate()
                     mutableState.value = MonetizeKitState.AdsSuppressed
                 } else {
                     lastResumedActivity?.get()?.let(::startAutomaticConsentFlow)
@@ -839,6 +1018,40 @@ object MonetizeKit {
         }
 }
 
+internal enum class AutomaticAppOpenTrigger {
+    COLD_START,
+    FOREGROUND_RETURN,
+}
+
+internal enum class AutomaticAppOpenDecision {
+    WAIT_FOR_PRELOAD,
+    SHOW,
+    SKIP_FOREGROUND_RETURN,
+    CANCEL_COLD_START,
+}
+
+/**
+ * Automatic foreground App Open is opportunistic. It must never issue a new request after an
+ * Activity has become interactive, because a later response would unexpectedly cover content.
+ */
+internal fun automaticAppOpenDecision(
+    trigger: AutomaticAppOpenTrigger,
+    coldStartSplashScreenBound: Boolean,
+    activityIsResumed: Boolean,
+    hasPreloadedCreative: Boolean,
+): AutomaticAppOpenDecision = when (trigger) {
+    AutomaticAppOpenTrigger.COLD_START -> when {
+        !coldStartSplashScreenBound -> AutomaticAppOpenDecision.CANCEL_COLD_START
+        hasPreloadedCreative -> AutomaticAppOpenDecision.SHOW
+        else -> AutomaticAppOpenDecision.WAIT_FOR_PRELOAD
+    }
+
+    AutomaticAppOpenTrigger.FOREGROUND_RETURN -> when {
+        activityIsResumed || !hasPreloadedCreative -> AutomaticAppOpenDecision.SKIP_FOREGROUND_RETURN
+        else -> AutomaticAppOpenDecision.SHOW
+    }
+}
+
 private class AdsRuntime(
     application: Application,
     val configuration: AdsConfiguration,
@@ -846,5 +1059,6 @@ private class AdsRuntime(
     val consentManager: GdprConsentManager,
 ) {
     val readyNetworks = ConcurrentHashMap.newKeySet<AdsNetwork>()
+    val preloadedFullscreenPlacements = ConcurrentHashMap.newKeySet<PlacementId>()
     val frequencyCapStore = FullscreenFrequencyCapStore(application)
 }

@@ -824,10 +824,13 @@ lifecycleScope.launch {
 
 ### App Open
 
-`appOpen(...)` автоматично preload-иться після consent і за замовчуванням показує один creative,
-коли застосунок наступного разу повертається у foreground. Він навмисно пропускає перший cold
-start, не перетинається з іншим fullscreen-форматом, використовує той самий frequency cap/retry
-policy та reload-иться після показу. Автоматичним може бути лише один App Open placement.
+`appOpen(...)` автоматично preload-иться після consent і за замовчуванням показує один уже
+закешований creative, коли застосунок наступного разу повертається у foreground. Він навмисно
+пропускає перший cold start, не перетинається з іншим fullscreen-форматом, використовує той самий
+frequency cap/retry policy та reload-иться після показу. Повернення у foreground не чекає на
+мережеву відповідь: якщо creative не готовий до інтерактивного стану Activity, MonetizeKit пропускає
+цей return і продовжує завантаження для наступного. Автоматичним може бути лише один App Open
+placement.
 
 ```kotlin
 appOpen(
@@ -843,6 +846,52 @@ appOpen(
     admob("ca-app-pub-xxxxxxxxxxxxxxxx/666")
 }
 ```
+
+Щоб показувати App Open на cold start, утримуйте системний splash screen. Так late creative не
+накриє вже готовий Compose-екран. Увімкніть `showOnColdStart` і вкажіть короткий timeout:
+
+```kotlin
+appOpen(
+    placement = AppAds.appReturn,
+    policy = AppOpenPlacementPolicy(
+        showOnAppForeground = true,
+        showOnColdStart = true,
+        coldStartTimeoutMillis = 4_000L,
+    ),
+) {
+    admob("ca-app-pub-xxxxxxxxxxxxxxxx/666")
+}
+```
+
+Потім прив'яжіть splash screen до MonetizeKit до того, як Activity почне малювати контент:
+
+```kotlin
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+
+override fun onCreate(savedInstanceState: Bundle?) {
+    val splashScreen = installSplashScreen()
+    MonetizeKit.bindColdStartSplashScreen(splashScreen)
+    super.onCreate(savedInstanceState)
+    // setContent { ... }
+}
+```
+
+Для launcher Activity використайте AndroidX splash theme:
+
+```xml
+<style name="Theme.App.Starting" parent="Theme.SplashScreen">
+    <item name="windowSplashScreenBackground">@color/launch_background</item>
+    <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+    <item name="postSplashScreenTheme">@style/Theme.App</item>
+</style>
+
+<!-- AndroidManifest.xml -->
+<activity android:name=".MainActivity" android:theme="@style/Theme.App.Starting" />
+```
+
+Splash знімається після закриття реклами, фінальної помилки consent/preload або timeout. Якщо він
+зніметься раніше, late creative лише кешується для наступного foreground return і ніколи не
+показується поверх інтерактивного cold-start контенту.
 
 Вкажіть `showOnAppForeground = false`, щоб самостійно керувати моментом показу: тоді викликайте
 `MonetizeKit.preload(AppAds.appReturn)` і `MonetizeKit.show(activity, AppAds.appReturn)` зі свого

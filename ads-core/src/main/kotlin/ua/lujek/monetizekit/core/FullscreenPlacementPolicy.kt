@@ -77,13 +77,51 @@ data class FullscreenPlacementPolicy(
  *
  * The default skips a cold start and loads the creative eagerly, then shows it on a later return
  * to the foreground. Set [showOnAppForeground] to false when the host app will call
- * `MonetizeKit.show(activity, placement)` itself.
+ * `MonetizeKit.show(activity, placement)` itself. When [showOnColdStart] is enabled, bind the
+ * host Activity's system splash screen with [MonetizeKit.bindColdStartSplashScreen]. This keeps
+ * interactive app content hidden until the ad is dismissed, loading fails, or
+ * [coldStartTimeoutMillis] elapses.
  */
 data class AppOpenPlacementPolicy(
     val showOnAppForeground: Boolean = true,
     val showOnColdStart: Boolean = false,
     val fullscreenPolicy: FullscreenPlacementPolicy = FullscreenPlacementPolicy(),
-)
+    val coldStartTimeoutMillis: Long = 4_000L,
+) {
+    init {
+        require(showOnAppForeground || !showOnColdStart) {
+            "Automatic App Open cold start requires showOnAppForeground = true."
+        }
+        require(coldStartTimeoutMillis > 0L) {
+            "App Open cold-start timeout must be greater than zero."
+        }
+    }
+}
+
+/**
+ * State of the optional system-splash gate used by automatic App Open ads on a cold start.
+ *
+ * A host normally does not observe this directly. Call
+ * [MonetizeKit.bindColdStartSplashScreen] immediately after `installSplashScreen()` instead.
+ */
+enum class AppOpenColdStartGateState {
+    /** The configured App Open placement does not own the initial launch screen. */
+    NOT_REQUIRED,
+
+    /** Consent, SDK initialization, or an App Open preload is still in progress. */
+    WAITING_FOR_AD,
+
+    /** An App Open creative is covering the splash screen. */
+    SHOWING_AD,
+
+    /** The application may reveal interactive content. */
+    RELEASED,
+    ;
+
+    /** True while the host's system splash screen must remain visible. */
+    val keepsSystemSplashScreen: Boolean
+        get() = this == WAITING_FOR_AD || this == SHOWING_AD
+}
 
 internal sealed interface FrequencyCapDecision {
     data object Allowed : FrequencyCapDecision
