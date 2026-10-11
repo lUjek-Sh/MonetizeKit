@@ -342,6 +342,7 @@ private fun SampleAdsAction.requiresReadySdk(): Boolean = when (this) {
 
 private fun MonetizeKitState.label(): String = when (this) {
     MonetizeKitState.Uninitialized -> "Not initialized"
+    MonetizeKitState.AwaitingAdsAccess -> "Waiting for advertising access"
     is MonetizeKitState.AwaitingGdprConsent -> "Waiting for UMP consent"
     is MonetizeKitState.Initializing -> "Initializing ${networks.joinToString()}"
     MonetizeKitState.GdprConsentRequired -> "Consent is required before ads can load"
