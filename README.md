@@ -533,10 +533,14 @@ This sequence follows Google's required lifecycle: verify, grant, then acknowled
 consumables). Do not use a client-only verifier for paid production benefits. [Google Play Billing
 integration guide](https://developer.android.com/google/play/billing/integrate)
 
-While entitlements are `Loading` or `Unavailable`, the ads bridge fails closed: it reserves no
-banner/native space and makes no ad request. Once the provider reports `Available(emptySet())`,
-MonetizeKit starts its normal GDPR flow. If `ads_free` later becomes active, loaded fullscreen ads
-are discarded, `show()`/`preload()` return `Suppressed`, and inline slots disappear immediately.
+While entitlements are `Loading`, the bridge exposes `AdsAccess.Pending`: it reserves no
+banner/native space and makes no ad request. With automatic cold-start App Open enabled, its splash
+gate remains in place while billing resolves, but only until the same `coldStartTimeoutMillis`
+deadline; a late result can cache an ad for a later foreground return, never overlay interactive
+content. `Unavailable` maps to `Suppressed` and releases the splash immediately. Once the provider
+reports `Available(emptySet())`, MonetizeKit starts its normal GDPR flow. If `ads_free` later becomes
+active, loaded fullscreen ads are discarded, `show()`/`preload()` return `Suppressed`, and inline
+slots disappear immediately.
 
 Use the same entitlement stream for non-ad features:
 

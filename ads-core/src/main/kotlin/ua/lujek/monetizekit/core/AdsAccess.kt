@@ -5,6 +5,14 @@ import kotlinx.coroutines.flow.StateFlow
 
 /** Whether this app session may request or display advertising. */
 sealed interface AdsAccess {
+    /**
+     * The application is still resolving whether advertising is permitted.
+     *
+     * This is fail-closed for ad requests and presentation, but is distinct from [Suppressed] so
+     * an automatic cold-start App Open flow can keep its splash gate until the configured timeout.
+     */
+    data object Pending : AdsAccess
+
     /** Ads may follow the normal consent, initialization, and placement rules. */
     data object Allowed : AdsAccess
 

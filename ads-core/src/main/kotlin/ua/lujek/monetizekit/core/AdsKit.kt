@@ -32,6 +32,9 @@ import java.util.concurrent.ConcurrentHashMap
 sealed interface MonetizeKitState {
     data object Uninitialized : MonetizeKitState
 
+    /** Advertising access is being resolved by the application, for example from billing. */
+    data object AwaitingAdsAccess : MonetizeKitState
+
     data class Initializing(
         val networks: Set<AdsNetwork>,
     ) : MonetizeKitState
@@ -123,6 +126,7 @@ object MonetizeKit {
     private var automaticAppOpenShowRunning = false
     private var coldStartSplashScreenBound = false
     private var coldStartTimeoutJob: Job? = null
+    private var stateBeforePendingAdsAccess: MonetizeKitState? = null
     private val mutableColdStartGateState = MutableStateFlow(AppOpenColdStartGateState.NOT_REQUIRED)
     private val adapterEventReporter = AdsEventReporter { event -> mutableEvents.tryEmit(event) }
 
@@ -223,7 +227,7 @@ object MonetizeKit {
                 ?.takeIf(AppOpenPlacementPolicy::showOnColdStart)
                 ?.let { AppOpenColdStartGateState.WAITING_FOR_AD }
                 ?: AppOpenColdStartGateState.NOT_REQUIRED
-            if (!isAdsAllowed() && mutableColdStartGateState.value == AppOpenColdStartGateState.WAITING_FOR_AD) {
+            if (isAdsSuppressed() && mutableColdStartGateState.value == AppOpenColdStartGateState.WAITING_FOR_AD) {
                 mutableColdStartGateState.value = AppOpenColdStartGateState.RELEASED
             }
 
@@ -235,10 +239,10 @@ object MonetizeKit {
                     },
                 )
             }
-            mutableState.value = if (isAdsAllowed()) {
-                MonetizeKitState.AwaitingGdprConsent(configuredNetworks)
-            } else {
-                MonetizeKitState.AdsSuppressed
+            mutableState.value = when (mutableAdsAccess.value) {
+                AdsAccess.Allowed -> MonetizeKitState.AwaitingGdprConsent(configuredNetworks)
+                AdsAccess.Pending -> MonetizeKitState.AwaitingAdsAccess
+                AdsAccess.Suppressed -> MonetizeKitState.AdsSuppressed
             }
             observeAdsAccess(runtime)
             registerFirstActivityConsentFlow(application)
@@ -251,7 +255,11 @@ object MonetizeKit {
      * automatically for the first resumed activity; call it explicitly to control launch timing.
      */
     suspend fun gatherGdprConsent(activity: Activity): ConsentSnapshot = consentMutex.withLock {
-        if (!isAdsAllowed()) {
+        if (isAdsAccessPending()) {
+            mutableState.value = MonetizeKitState.AwaitingAdsAccess
+            return@withLock pendingAdsAccessConsentSnapshot()
+        }
+        if (isAdsSuppressed()) {
             mutableState.value = MonetizeKitState.AdsSuppressed
             return@withLock suppressedConsentSnapshot()
         }
@@ -282,7 +290,8 @@ object MonetizeKit {
 
     /** Call only from a user action, for example an in-app Privacy settings row. */
     suspend fun showPrivacyOptions(activity: Activity): ConsentSnapshot = consentMutex.withLock {
-        if (!isAdsAllowed()) return@withLock suppressedConsentSnapshot()
+        if (isAdsAccessPending()) return@withLock pendingAdsAccessConsentSnapshot()
+        if (isAdsSuppressed()) return@withLock suppressedConsentSnapshot()
         val runtime = currentRuntime()
             ?: return@withLock ConsentSnapshot(
                 canRequestAds = false,
@@ -441,6 +450,7 @@ object MonetizeKit {
             errors[AdsNetwork.ADMOB] = error
             mutableEvents.emit(AdsEvent.NetworkInitializationFailed(AdsNetwork.ADMOB, error))
             mutableState.value = MonetizeKitState.Failed(errors)
+            releaseColdStartGate()
             return
         }
         configuredNetworks.forEach { network ->
@@ -476,17 +486,30 @@ object MonetizeKit {
                 }
             }
         }
-        if (!isAdsAllowed()) {
-            runtime.adapters.values.forEach(AdsNetworkAdapter::clearFullscreenCache)
-            mutableState.value = MonetizeKitState.AdsSuppressed
-            releaseColdStartGate()
-        } else if (runtime.readyNetworks.isEmpty()) {
-            mutableState.value = MonetizeKitState.Failed(errors)
-            releaseColdStartGate()
-        } else {
-            mutableState.value = MonetizeKitState.Ready(runtime.readyNetworks.toSet(), errors)
-            preloadConfiguredAppOpenPlacements(runtime)
-            maybeShowAutomaticAppOpen()
+        when {
+            isAdsSuppressed() -> {
+                runtime.adapters.values.forEach(AdsNetworkAdapter::clearFullscreenCache)
+                runtime.preloadedFullscreenPlacements.clear()
+                mutableState.value = MonetizeKitState.AdsSuppressed
+                releaseColdStartGate()
+            }
+
+            isAdsAccessPending() -> {
+                runtime.adapters.values.forEach(AdsNetworkAdapter::clearFullscreenCache)
+                runtime.preloadedFullscreenPlacements.clear()
+                enterPendingAdsAccessState()
+            }
+
+            runtime.readyNetworks.isEmpty() -> {
+                mutableState.value = MonetizeKitState.Failed(errors)
+                releaseColdStartGate()
+            }
+
+            else -> {
+                mutableState.value = MonetizeKitState.Ready(runtime.readyNetworks.toSet(), errors)
+                preloadConfiguredAppOpenPlacements(runtime)
+                maybeShowAutomaticAppOpen()
+            }
         }
     }
 
@@ -635,6 +658,10 @@ object MonetizeKit {
 
     private fun maybeShowAutomaticAppOpen() {
         val trigger = automaticAppOpenTrigger ?: return
+        if (!canContinueAutomaticAppOpen(trigger, mutableColdStartGateState.value)) {
+            cancelAutomaticColdStart()
+            return
+        }
         if (automaticAppOpenShowRunning || !isAdsAllowed()) return
         val runtime = currentRuntime() ?: return
         if (runtime.readyNetworks.isEmpty()) return
@@ -706,7 +733,7 @@ object MonetizeKit {
     }
 
     private fun startColdStartTimeout(policy: AppOpenPlacementPolicy) {
-        if (mutableColdStartGateState.value == AppOpenColdStartGateState.NOT_REQUIRED) return
+        if (!shouldStartColdStartTimeout(mutableColdStartGateState.value)) return
         coldStartTimeoutJob?.cancel()
         coldStartTimeoutJob = scope.launch {
             delay(policy.coldStartTimeoutMillis)
@@ -724,6 +751,9 @@ object MonetizeKit {
     }
 
     private fun releaseColdStartGate() {
+        if (automaticAppOpenTrigger == AutomaticAppOpenTrigger.COLD_START) {
+            automaticAppOpenTrigger = null
+        }
         coldStartTimeoutJob?.cancel()
         coldStartTimeoutJob = null
         when (mutableColdStartGateState.value) {
@@ -959,31 +989,86 @@ object MonetizeKit {
             runtime.configuration.adsAccessProvider.access.collect { access ->
                 mutableAdsAccess.value = access
                 mutableEvents.emit(AdsEvent.AdsAccessChanged(access))
-                if (access == AdsAccess.Suppressed) {
-                    runtime.adapters.values.forEach(AdsNetworkAdapter::clearFullscreenCache)
-                    runtime.preloadedFullscreenPlacements.clear()
-                    automaticAppOpenTrigger = null
-                    releaseColdStartGate()
-                    mutableState.value = MonetizeKitState.AdsSuppressed
-                } else {
-                    lastResumedActivity?.get()?.let(::startAutomaticConsentFlow)
+                when (access) {
+                    AdsAccess.Pending -> {
+                        runtime.adapters.values.forEach(AdsNetworkAdapter::clearFullscreenCache)
+                        runtime.preloadedFullscreenPlacements.clear()
+                        if (automaticAppOpenTrigger == AutomaticAppOpenTrigger.FOREGROUND_RETURN) {
+                            automaticAppOpenTrigger = null
+                        }
+                        enterPendingAdsAccessState()
+                    }
+
+                    AdsAccess.Suppressed -> {
+                        runtime.adapters.values.forEach(AdsNetworkAdapter::clearFullscreenCache)
+                        runtime.preloadedFullscreenPlacements.clear()
+                        stateBeforePendingAdsAccess = null
+                        automaticAppOpenTrigger = null
+                        releaseColdStartGate()
+                        mutableState.value = MonetizeKitState.AdsSuppressed
+                    }
+
+                    AdsAccess.Allowed -> {
+                        leavePendingAdsAccessState()
+                        val consent = mutableGdprConsent.value as? GdprConsentState.Resolved
+                        if (consent?.snapshot?.canRequestAds == true) {
+                            startAdaptersIfAllowed(runtime.application, runtime)
+                        } else {
+                            lastResumedActivity?.get()?.let(::startAutomaticConsentFlow)
+                        }
+                    }
                 }
             }
         }
     }
 
+    private fun enterPendingAdsAccessState() {
+        if (mutableState.value !is MonetizeKitState.AwaitingAdsAccess) {
+            stateBeforePendingAdsAccess = mutableState.value
+        }
+        mutableState.value = MonetizeKitState.AwaitingAdsAccess
+    }
+
+    private fun leavePendingAdsAccessState() {
+        val previousState = stateBeforePendingAdsAccess
+        stateBeforePendingAdsAccess = null
+        if (previousState != null && previousState !is MonetizeKitState.AdsSuppressed) {
+            mutableState.value = previousState
+        }
+    }
+
     private fun startAutomaticConsentFlow(activity: Activity) {
         if (!isAdsAllowed()) return
-        val callbacks = synchronized(lock) {
+        synchronized(lock) {
             if (automaticConsentRequestStarted) return
             automaticConsentRequestStarted = true
-            consentLifecycleCallbacks.also { consentLifecycleCallbacks = null }
         }
-        callbacks?.let(activity.application::unregisterActivityLifecycleCallbacks)
-        scope.launch { gatherGdprConsent(activity) }
+        scope.launch {
+            gatherGdprConsent(activity)
+            if (isAdsAccessPending()) {
+                synchronized(lock) {
+                    automaticConsentRequestStarted = false
+                }
+                return@launch
+            }
+            val callbacks = synchronized(lock) {
+                consentLifecycleCallbacks.also { consentLifecycleCallbacks = null }
+            }
+            callbacks?.let(activity.application::unregisterActivityLifecycleCallbacks)
+        }
     }
 
     private fun isAdsAllowed(): Boolean = mutableAdsAccess.value == AdsAccess.Allowed
+
+    private fun isAdsAccessPending(): Boolean = mutableAdsAccess.value == AdsAccess.Pending
+
+    private fun isAdsSuppressed(): Boolean = mutableAdsAccess.value == AdsAccess.Suppressed
+
+    private fun pendingAdsAccessConsentSnapshot(): ConsentSnapshot = ConsentSnapshot(
+        canRequestAds = false,
+        isPrivacyOptionsRequired = false,
+        error = AdsError(message = "Advertising access is still being resolved by the application."),
+    )
 
     private fun suppressedConsentSnapshot(): ConsentSnapshot = ConsentSnapshot(
         canRequestAds = false,
@@ -1030,6 +1115,17 @@ internal enum class AutomaticAppOpenDecision {
     CANCEL_COLD_START,
 }
 
+/** A released cold-start gate must never permit a later preload callback to show an App Open ad. */
+internal fun canContinueAutomaticAppOpen(
+    trigger: AutomaticAppOpenTrigger,
+    coldStartGateState: AppOpenColdStartGateState,
+): Boolean = trigger != AutomaticAppOpenTrigger.COLD_START ||
+    coldStartGateState == AppOpenColdStartGateState.WAITING_FOR_AD
+
+internal fun shouldStartColdStartTimeout(
+    coldStartGateState: AppOpenColdStartGateState,
+): Boolean = coldStartGateState == AppOpenColdStartGateState.WAITING_FOR_AD
+
 /**
  * Automatic foreground App Open is opportunistic. It must never issue a new request after an
  * Activity has become interactive, because a later response would unexpectedly cover content.
@@ -1053,7 +1149,7 @@ internal fun automaticAppOpenDecision(
 }
 
 private class AdsRuntime(
-    application: Application,
+    val application: Application,
     val configuration: AdsConfiguration,
     val adapters: Map<AdsNetwork, AdsNetworkAdapter>,
     val consentManager: GdprConsentManager,

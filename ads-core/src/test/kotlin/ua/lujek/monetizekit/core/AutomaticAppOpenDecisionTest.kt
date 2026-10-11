@@ -73,4 +73,37 @@ class AutomaticAppOpenDecisionTest {
             ),
         )
     }
+
+    @Test
+    fun `released cold-start gate rejects late preload callbacks`() {
+        assertEquals(
+            true,
+            canContinueAutomaticAppOpen(
+                trigger = AutomaticAppOpenTrigger.COLD_START,
+                coldStartGateState = AppOpenColdStartGateState.WAITING_FOR_AD,
+            ),
+        )
+        assertEquals(
+            false,
+            canContinueAutomaticAppOpen(
+                trigger = AutomaticAppOpenTrigger.COLD_START,
+                coldStartGateState = AppOpenColdStartGateState.RELEASED,
+            ),
+        )
+        assertEquals(
+            false,
+            canContinueAutomaticAppOpen(
+                trigger = AutomaticAppOpenTrigger.COLD_START,
+                coldStartGateState = AppOpenColdStartGateState.SHOWING_AD,
+            ),
+        )
+    }
+
+    @Test
+    fun `cold-start timeout starts only while splash gate waits for an ad`() {
+        assertEquals(true, shouldStartColdStartTimeout(AppOpenColdStartGateState.WAITING_FOR_AD))
+        assertEquals(false, shouldStartColdStartTimeout(AppOpenColdStartGateState.NOT_REQUIRED))
+        assertEquals(false, shouldStartColdStartTimeout(AppOpenColdStartGateState.SHOWING_AD))
+        assertEquals(false, shouldStartColdStartTimeout(AppOpenColdStartGateState.RELEASED))
+    }
 }

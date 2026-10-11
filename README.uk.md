@@ -539,10 +539,14 @@ verifier повертає `RetryLater`, покупка лишається нео
 consumable). Не використовуйте client-only verifier для платних production-прав. [Посібник з
 інтеграції Google Play Billing](https://developer.android.com/google/play/billing/integrate)
 
-Коли entitlement-и мають стан `Loading` або `Unavailable`, ads bridge fail-closed: не резервує
-місце під banner/native і не робить ad request. Після `Available(emptySet())` MonetizeKit запускає
-звичайний GDPR flow. Якщо `ads_free` стане активним пізніше, завантажені fullscreen-оголошення
-видаляються, `show()`/`preload()` повертають `Suppressed`, а inline slot-и зникають одразу.
+Коли entitlement-и мають стан `Loading`, bridge віддає `AdsAccess.Pending`: не резервує місце під
+banner/native і не робить ad request. Якщо увімкнено automatic cold-start App Open, його splash gate
+залишається, поки billing визначає доступ, але лише до спільного дедлайну `coldStartTimeoutMillis`;
+пізній результат може закешувати рекламу для наступного повернення у foreground, але ніколи не
+накриє інтерактивний контент. `Unavailable` перетворюється на `Suppressed` і одразу знімає splash.
+Після `Available(emptySet())` MonetizeKit запускає звичайний GDPR flow. Якщо `ads_free` стане
+активним пізніше, завантажені fullscreen-оголошення видаляються, `show()`/`preload()` повертають
+`Suppressed`, а inline slot-и зникають одразу.
 
 Той самий entitlement stream керує функціями, не пов'язаними з рекламою:
 

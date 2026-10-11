@@ -14,7 +14,8 @@ import ua.lujek.monetizekit.core.AdsAccessProvider
 /**
  * Converts application entitlements into the ads policy without coupling ads-core to billing.
  * Unknown billing state is intentionally fail-closed: no inventory is requested or reserved until
- * the active account is known.
+ * the active account is known. [AdsAccess.Pending] remains distinct from [AdsAccess.Suppressed],
+ * so a cold-start App Open splash can wait for the entitlement result up to its configured timeout.
  */
 class EntitlementAdsAccessProvider(
     entitlementProvider: EntitlementProvider,
@@ -59,7 +60,8 @@ private fun EntitlementState.toAdsAccess(
         if (active.any(suppressAdsWhenAnyOf::contains)) AdsAccess.Suppressed else AdsAccess.Allowed
     }
 
-    EntitlementState.Loading,
+    EntitlementState.Loading -> AdsAccess.Pending
+
     is EntitlementState.Unavailable,
     -> AdsAccess.Suppressed
 }
