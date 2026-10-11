@@ -2,12 +2,5 @@ jdk:
   - openjdk17
 
 install:
-  - |
-      set -e
-      chmod +x gradlew
-      java -version
-      ./gradlew \
-        --no-daemon \
-        --system-prop "org.gradle.java.home=${JAVA_HOME}" \
-        --system-prop org.gradle.internal.instrumentation.agent=false \
-        build publishToMavenLocal --stacktrace
+  - chmod +x gradlew
+  - ./gradlew build publishToMavenLocal --stacktrace
