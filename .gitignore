@@ -8,6 +8,7 @@
 /captures
 .externalNativeBuild
 .cxx
+gradle/gradle-daemon-jvm.properties
 local.properties
 /ads-admob/build
 /ads-core/build
