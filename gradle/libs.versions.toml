@@ -5,6 +5,7 @@ coroutines = "1.11.0"
 koin = "4.2.2"
 kotlin = "2.4.21"
 googleMobileAds = "25.5.0"
+googlePlayHsdp = "2.2.0"
 metaAudienceNetwork = "6.22.0"
 unityAds = "4.21.0"
 metaMediationAdapter = "6.22.0.1"
@@ -42,6 +43,7 @@ androidx-lifecycle-runtime = { group = "androidx.lifecycle", name = "lifecycle-r
 androidx-lifecycle-process = { group = "androidx.lifecycle", name = "lifecycle-process", version.ref = "lifecycle" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 google-mobile-ads = { group = "com.google.android.gms", name = "play-services-ads", version.ref = "googleMobileAds" }
+google-play-hsdp = { group = "com.google.android.play", name = "hsdp", version.ref = "googlePlayHsdp" }
 meta-audience-network = { group = "com.facebook.android", name = "audience-network-sdk", version.ref = "metaAudienceNetwork" }
 unity-ads = { group = "com.unity3d.ads", name = "unity-ads", version.ref = "unityAds" }
 google-ads-mediation-meta = { group = "com.google.ads.mediation", name = "facebook", version.ref = "metaMediationAdapter" }
