@@ -110,19 +110,14 @@ jobs:
             echo "Found ${apk}"
           done
 
-      # The static node option is required for the emulator action to detect
-      # KVM consistently on GitHub-hosted Linux runners. Without it the action
-      # falls back to software emulation (-accel off), which is very slow and
-      # can leave ADB offline during boot.
-      - name: Enable KVM access for the Android emulator
+      # Matches the emulator action's recommended setup for GitHub-hosted
+      # Linux runners. The action then verifies KVM access before it starts.
+      - name: Enable KVM group permissions
         shell: bash
         run: |
-          test -e /dev/kvm
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          test -r /dev/kvm
-          test -w /dev/kvm
 
       - name: Run behavior tests on an Android emulator
         uses: reactivecircus/android-emulator-runner@v2
