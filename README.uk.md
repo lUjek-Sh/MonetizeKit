@@ -4,8 +4,7 @@
   <strong>Єдиний Android toolkit для реклами, consent, billing та вимкнення реклами через entitlement-и.</strong>
 </p>
 
-<p align="center">
-  <a href="https://github.com/lUjek-Sh/MonetizeKit/actions/workflows/verify.yml"><img src="https://github.com/lUjek-Sh/MonetizeKit/actions/workflows/verify.yml/badge.svg" alt="Verification workflow"></a>
+<p align="center"> 
   <a href="https://jitpack.io/#lUjek-Sh/MonetizeKit"><img src="https://jitpack.io/v/lUjek-Sh/MonetizeKit.svg" alt="JitPack"></a>
   <img src="https://img.shields.io/badge/Android-API%2024%2B-3DDC84?logo=android&logoColor=white" alt="Android API 24 and above">
   <img src="https://img.shields.io/badge/Kotlin-2.4.21-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin">
